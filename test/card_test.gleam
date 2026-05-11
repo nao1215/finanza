@@ -144,13 +144,13 @@ pub fn validate_rejects_unknown_brand_test() -> Nil {
 // --- Masking ------------------------------------------------------------
 
 pub fn mask_default_test() -> Nil {
-  card.mask(pan: "4111111111111111", options: card.mask_defaults())
+  card.mask(pan: "4111111111111111", options: card.default_mask())
   |> should.equal(Ok("4111 **** **** 1111"))
 }
 
 pub fn mask_no_grouping_test() -> Nil {
   let opts =
-    card.mask_defaults()
+    card.default_mask()
     |> card.with_group_size(size: 0)
   card.mask(pan: "4111111111111111", options: opts)
   |> should.equal(Ok("4111********1111"))
@@ -158,7 +158,7 @@ pub fn mask_no_grouping_test() -> Nil {
 
 pub fn mask_custom_keep_test() -> Nil {
   let opts =
-    card.mask_defaults()
+    card.default_mask()
     |> card.with_keep_first(count: 6)
     |> card.with_keep_last(count: 2)
     |> card.with_group_size(size: 0)
@@ -168,14 +168,14 @@ pub fn mask_custom_keep_test() -> Nil {
 
 pub fn mask_custom_char_test() -> Nil {
   let opts =
-    card.mask_defaults()
+    card.default_mask()
     |> card.with_mask_char(char: "X")
   card.mask(pan: "4111111111111111", options: opts)
   |> should.equal(Ok("4111 XXXX XXXX 1111"))
 }
 
 pub fn mask_rejects_empty_test() -> Nil {
-  card.mask(pan: "", options: card.mask_defaults())
+  card.mask(pan: "", options: card.default_mask())
   |> should.equal(Error(card.EmptyInput))
 }
 
@@ -183,7 +183,7 @@ pub fn mask_amex_segment_aware_test() -> Nil {
   // 15-digit AMEX: keep_first=4, keep_last=4, group_size=4.
   // Old behaviour leaked the last "0005" into the previous block as
   // "***0 005". Segment-aware grouping keeps the trailing 4 intact.
-  card.mask(pan: "378282246310005", options: card.mask_defaults())
+  card.mask(pan: "378282246310005", options: card.default_mask())
   |> should.equal(Ok("3782 **** *** 0005"))
 }
 
@@ -191,7 +191,7 @@ pub fn mask_diners_segment_aware_test() -> Nil {
   // 14-digit Diners Club. keep_first=4, keep_last=4, group_size=4.
   // Mask block is 6 chars ("******"); chunked left-to-right that's
   // a "****" followed by "**".
-  card.mask(pan: "30569309025904", options: card.mask_defaults())
+  card.mask(pan: "30569309025904", options: card.default_mask())
   |> should.equal(Ok("3056 **** ** 5904"))
 }
 
@@ -210,26 +210,26 @@ pub fn bin_test() -> Nil {
 // --- Expiry -------------------------------------------------------------
 
 pub fn expiry_valid_future_test() -> Nil {
-  card.expiry_valid(month: 5, year: 2028, today_year: 2026, today_month: 5)
+  card.expiry_valid(expiry: #(5, 2028), today: #(5, 2026))
   |> should.be_true
 }
 
 pub fn expiry_valid_current_month_test() -> Nil {
-  card.expiry_valid(month: 5, year: 2026, today_year: 2026, today_month: 5)
+  card.expiry_valid(expiry: #(5, 2026), today: #(5, 2026))
   |> should.be_true
 }
 
 pub fn expiry_valid_past_test() -> Nil {
-  card.expiry_valid(month: 4, year: 2026, today_year: 2026, today_month: 5)
+  card.expiry_valid(expiry: #(4, 2026), today: #(5, 2026))
   |> should.be_false
-  card.expiry_valid(month: 12, year: 2025, today_year: 2026, today_month: 5)
+  card.expiry_valid(expiry: #(12, 2025), today: #(5, 2026))
   |> should.be_false
 }
 
 pub fn expiry_invalid_month_test() -> Nil {
-  card.expiry_valid(month: 13, year: 2028, today_year: 2026, today_month: 5)
+  card.expiry_valid(expiry: #(13, 2028), today: #(5, 2026))
   |> should.be_false
-  card.expiry_valid(month: 0, year: 2028, today_year: 2026, today_month: 5)
+  card.expiry_valid(expiry: #(0, 2028), today: #(5, 2026))
   |> should.be_false
 }
 

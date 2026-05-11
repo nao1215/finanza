@@ -208,7 +208,7 @@ pub fn fuzz_card_mask_test() -> Nil {
   iterate(prng, trials, fn(p) {
     let #(length, p1) = int_in_range(p, 0, 25)
     let #(s, p2) = gen_pan_like(p1, length)
-    case card.mask(s, card.mask_defaults()) {
+    case card.mask(s, card.default_mask()) {
       Ok(_) -> p2
       Error(card.EmptyInput) -> p2
       Error(card.InvalidCharacter) -> p2

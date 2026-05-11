@@ -7,6 +7,24 @@ and this project is expected to follow [Semantic Versioning](https://semver.org/
 
 ## [Unreleased]
 
+### Breaking changes (API consistency pass)
+
+These rename a small number of public functions / arguments to remove
+naming inconsistencies before 0.1.0. Adapt call sites accordingly.
+
+- `finanza/card.expiry_valid` now takes two `#(month, year)` tuples
+  (`expiry` and `today`) instead of four labelled `Int`s. The original
+  shape was prone to silent argument swaps; the tuple form makes the
+  pairing explicit at the call site.
+- `finanza/card.mask_defaults` is renamed to `default_mask` so it
+  matches `finanza/currency.default_format` (`default_X` everywhere
+  rather than `default_X` / `X_defaults`).
+- `finanza/currency.new` (Money constructor) is renamed to `new_money`
+  so it pairs with `new_currency` and the `currency.` prefix no longer
+  appears to return the wrong type.
+- `finanza/currency.with_currency_code` now uses the label `enabled:`
+  instead of `show:`, matching `with_minor_units(enabled:)`.
+
 ### Added
 
 - `finanza/decimal.format` — render a `Decimal` with configurable
@@ -14,7 +32,7 @@ and this project is expected to follow [Semantic Versioning](https://semver.org/
   `"1234.56"`).
 - `finanza/currency.with_minor_units` — `FormatOptions` toggle (default
   `True`) that rescales a `Money` amount to the currency's minor-unit
-  exponent before rendering, so `currency.new(decimal.from_int(200_000),
+  exponent before rendering, so `currency.new_money(decimal.from_int(200_000),
   catalog.usd())` renders as `"$200,000.00"` rather than `"$200000"`.
 
 ### Changed

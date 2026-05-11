@@ -327,7 +327,7 @@ pub fn mask_preserves_keep_counts_test() -> Nil {
       // Generate digit-only PAN of length 13–19.
       let #(length, p1) = int_in_range(p, 13, 19)
       let #(pan, p2) = random_digits(p1, length)
-      case card.mask(pan, card.mask_defaults()) {
+      case card.mask(pan, card.default_mask()) {
         Ok(masked) -> {
           // The masked string should contain the first 4 digits of the
           // PAN as a substring and the last 4 digits as a substring.

@@ -234,7 +234,7 @@ pub fn mask_preserves_keep_first_test() -> Nil {
     "6200000000000005",
   ]
   list.each(pans, fn(pan) {
-    let assert Ok(masked) = card.mask(pan, card.mask_defaults())
+    let assert Ok(masked) = card.mask(pan, card.default_mask())
     // mask_defaults keeps first 4 by default.
     let prefix = string_slice_first_4(pan)
     string_contains_local(masked, prefix)

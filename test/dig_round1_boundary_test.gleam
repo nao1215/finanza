@@ -304,7 +304,7 @@ pub fn mask_when_keep_exceeds_length_test() -> Nil {
   // keep_first=4, keep_last=4 with a 5-digit input: keep_first clamps,
   // keep_last clamps to remaining length, mask block is empty.
   // Should not crash; should keep everything visible.
-  let assert Ok(masked) = card.mask("12345", card.mask_defaults())
+  let assert Ok(masked) = card.mask("12345", card.default_mask())
   string.contains(masked, "*")
   |> should.be_false
 }
@@ -335,7 +335,7 @@ pub fn parse_expiry_month_zero_test() -> Nil {
 }
 
 pub fn expiry_year_zero_test() -> Nil {
-  card.expiry_valid(month: 1, year: 0, today_year: 2026, today_month: 5)
+  card.expiry_valid(expiry: #(1, 0), today: #(5, 2026))
   |> should.be_false
 }
 

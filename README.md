@@ -51,7 +51,7 @@ import finanza/currency/catalog
 import finanza/decimal
 
 pub fn invoice_line() -> String {
-  currency.new(decimal.from_int(200_000), catalog.usd())
+  currency.new_money(decimal.from_int(200_000), catalog.usd())
   |> currency.format(currency.default_format())
 }
 // invoice_line() == "$200,000.00"
@@ -146,7 +146,7 @@ pub fn check_card(pan: String) -> Result(card.Brand, card.ValidationError) {
 import finanza/card
 
 pub fn safe_display(pan: String) -> Result(String, card.ValidationError) {
-  card.mask(pan, card.mask_defaults())
+  card.mask(pan, card.default_mask())
 }
 // safe_display("4111111111111111") == Ok("4111 **** **** 1111")
 // safe_display("378282246310005")  == Ok("3782 **** *** 0005")
@@ -167,7 +167,7 @@ pub fn parse_card_expiry(input: String) {
 import finanza/card
 
 pub fn still_valid(month: Int, year: Int) -> Bool {
-  card.expiry_valid(month: month, year: year, today_year: 2026, today_month: 5)
+  card.expiry_valid(expiry: #(month, year), today: #(5, 2026))
 }
 // still_valid(12, 2028) == True
 // still_valid(5, 2026)  == True

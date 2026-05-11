@@ -102,7 +102,7 @@ pub fn to_minor_test() -> Nil {
 pub fn to_minor_with_finer_precision_test() -> Nil {
   // $1.005 → 100 (banker's rounding because 100.5 ties, 100 is even).
   let assert Ok(amount) = decimal.from_string("1.005")
-  let m = currency.new(amount: amount, currency: catalog.usd())
+  let m = currency.new_money(amount: amount, currency: catalog.usd())
   currency.to_minor(m: m, mode: rounding.HalfEven)
   |> should.equal(Ok(100))
 }
@@ -317,7 +317,7 @@ pub fn format_with_currency_code_test() -> Nil {
   let m = currency.from_minor(units: 1234, currency: catalog.usd())
   let opts =
     currency.default_format()
-    |> currency.with_currency_code(show: True)
+    |> currency.with_currency_code(enabled: True)
   currency.format(m: m, options: opts)
   |> should.equal("$12.34 USD")
 }
@@ -331,7 +331,10 @@ pub fn format_jpy_no_decimals_test() -> Nil {
 pub fn format_normalises_integer_amount_to_minor_units_test() -> Nil {
   // Whole dollars should render with two cents and a thousands sep.
   let m =
-    currency.new(amount: decimal.from_int(n: 200_000), currency: catalog.usd())
+    currency.new_money(
+      amount: decimal.from_int(n: 200_000),
+      currency: catalog.usd(),
+    )
   currency.format(m: m, options: currency.default_format())
   |> should.equal("$200,000.00")
 }
@@ -339,7 +342,7 @@ pub fn format_normalises_integer_amount_to_minor_units_test() -> Nil {
 pub fn format_minor_units_disabled_preserves_precision_test() -> Nil {
   // For FX-style four-decimal precision, opt out of minor-unit rescale.
   let assert Ok(amount) = decimal.from_string("1.2345")
-  let m = currency.new(amount: amount, currency: catalog.usd())
+  let m = currency.new_money(amount: amount, currency: catalog.usd())
   let opts =
     currency.default_format()
     |> currency.with_minor_units(enabled: False)
@@ -349,7 +352,7 @@ pub fn format_minor_units_disabled_preserves_precision_test() -> Nil {
 
 pub fn format_minor_units_rounds_excess_precision_test() -> Nil {
   let assert Ok(amount) = decimal.from_string("12.345")
-  let m = currency.new(amount: amount, currency: catalog.usd())
+  let m = currency.new_money(amount: amount, currency: catalog.usd())
   // Default minor_units = True, HalfEven rounding: 12.345 → 12.34 (tie, even).
   currency.format(m: m, options: currency.default_format())
   |> should.equal("$12.34")

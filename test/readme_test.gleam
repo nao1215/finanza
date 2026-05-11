@@ -43,7 +43,7 @@ pub fn readme_decimal_format_test() -> Nil {
 // --- Money --------------------------------------------------------------
 
 fn invoice_line() -> String {
-  currency.new(decimal.from_int(200_000), catalog.usd())
+  currency.new_money(decimal.from_int(200_000), catalog.usd())
   |> currency.format(currency.default_format())
 }
 
@@ -136,7 +136,7 @@ pub fn readme_check_card_luhn_fail_test() -> Nil {
 }
 
 fn safe_display(pan: String) -> Result(String, card.ValidationError) {
-  card.mask(pan, card.mask_defaults())
+  card.mask(pan, card.default_mask())
 }
 
 pub fn readme_safe_display_visa_test() -> Nil {
@@ -169,7 +169,7 @@ pub fn readme_parse_expiry_invalid_test() -> Nil {
 }
 
 fn still_valid(month: Int, year: Int) -> Bool {
-  card.expiry_valid(month: month, year: year, today_year: 2026, today_month: 5)
+  card.expiry_valid(expiry: #(month, year), today: #(5, 2026))
 }
 
 pub fn readme_still_valid_future_test() -> Nil {

@@ -120,8 +120,14 @@ pub fn name(c c: Currency) -> String {
 // --- Money construction & accessors -------------------------------------
 
 /// Build a `Money` from a [`Decimal`](./decimal.html#Decimal) and a
-/// [`Currency`](#Currency).
-pub fn new(amount amount: decimal.Decimal, currency currency: Currency) -> Money {
+/// [`Currency`](#Currency). Named `new_money` rather than `new` to
+/// keep symmetry with [`new_currency`](#new_currency) and to avoid
+/// the surprise of `currency.new` returning the *other* type from
+/// the module's name.
+pub fn new_money(
+  amount amount: decimal.Decimal,
+  currency currency: Currency,
+) -> Money {
   Money(amount: amount, currency: currency)
 }
 
@@ -347,9 +353,9 @@ pub fn with_negative_style(
 /// Toggle whether the ISO code is appended to the rendered string.
 pub fn with_currency_code(
   options options: FormatOptions,
-  show show: Bool,
+  enabled enabled: Bool,
 ) -> FormatOptions {
-  FormatOptions(..options, show_currency_code: show)
+  FormatOptions(..options, show_currency_code: enabled)
 }
 
 /// Toggle whether the amount is rescaled to the currency's

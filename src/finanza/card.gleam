@@ -41,7 +41,7 @@ pub type ValidationError {
   InvalidExpiry
 }
 
-/// Options for [`mask`](#mask). Build with [`mask_defaults`](#mask_defaults)
+/// Options for [`mask`](#mask). Build with [`default_mask`](#default_mask)
 /// and the `with_*` setters.
 pub opaque type MaskOptions {
   MaskOptions(
@@ -277,7 +277,7 @@ fn digits_only(pan: String) -> Result(Nil, ValidationError) {
 /// Default [`MaskOptions`](#MaskOptions): keep the first 4 and last 4
 /// digits, mask the rest with `*`, and group output as 4-digit blocks
 /// separated by spaces.
-pub fn mask_defaults() -> MaskOptions {
+pub fn default_mask() -> MaskOptions {
   MaskOptions(
     keep_first: 4,
     keep_last: 4,
@@ -423,15 +423,20 @@ pub fn bin(pan pan: String) -> Result(String, ValidationError) {
 
 // --- Expiry -------------------------------------------------------------
 
-/// Test whether `month`/`year` is on or after `today_year`/`today_month`.
-/// Both `month` values must be in `1..=12`.
+/// Test whether the `expiry` date (`#(month, year)`) is on or after
+/// `today` (`#(month, year)`). The month component of both tuples
+/// must be in `1..=12`.
+///
+/// Tuples are used (rather than four labelled `Int` arguments) so that
+/// the year/month order cannot be silently swapped at the call site.
 pub fn expiry_valid(
-  month month: Int,
-  year year: Int,
-  today_year today_year: Int,
-  today_month today_month: Int,
+  expiry expiry: #(Int, Int),
+  today today: #(Int, Int),
 ) -> Bool {
+  let #(month, year) = expiry
+  let #(today_month, today_year) = today
   use <- bool.guard(when: month < 1 || month > 12, return: False)
+  use <- bool.guard(when: today_month < 1 || today_month > 12, return: False)
   use <- bool.guard(when: year > today_year, return: True)
   use <- bool.guard(when: year < today_year, return: False)
   month >= today_month
