@@ -5,8 +5,10 @@ payment-card helpers for Gleam. Runs on the Erlang and JavaScript
 targets.
 
 [![Package Version](https://img.shields.io/hexpm/v/finanza)](https://hex.pm/packages/finanza)
+[![Downloads](https://img.shields.io/hexpm/dt/finanza)](https://hex.pm/packages/finanza)
 [![Hex Docs](https://img.shields.io/badge/hex-docs-ffaff3)](https://hexdocs.pm/finanza/)
 [![CI](https://github.com/nao1215/finanza/actions/workflows/ci.yml/badge.svg)](https://github.com/nao1215/finanza/actions/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/nao1215/finanza)](LICENSE)
 
 ```sh
 gleam add finanza
