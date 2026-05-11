@@ -146,6 +146,49 @@ pub fn render_preserves_trailing_zeros_test() -> Nil {
   |> should.equal("1.50")
 }
 
+// --- decimal.format ------------------------------------------------------
+
+pub fn format_basic_test() -> Nil {
+  let d = decimal.new(coefficient: 1_234_567, exponent: -2)
+  decimal.format(d: d, thousands: ",", decimal_separator: ".")
+  |> should.equal("12,345.67")
+}
+
+pub fn format_integer_only_test() -> Nil {
+  let d = decimal.from_int(n: 1_234_567)
+  decimal.format(d: d, thousands: ",", decimal_separator: ".")
+  |> should.equal("1,234,567")
+}
+
+pub fn format_negative_test() -> Nil {
+  let d = decimal.new(coefficient: -1_234_567, exponent: -2)
+  decimal.format(d: d, thousands: ",", decimal_separator: ".")
+  |> should.equal("-12,345.67")
+}
+
+pub fn format_german_style_test() -> Nil {
+  let d = decimal.new(coefficient: 1_234_567, exponent: -2)
+  decimal.format(d: d, thousands: ".", decimal_separator: ",")
+  |> should.equal("12.345,67")
+}
+
+pub fn format_no_thousands_separator_test() -> Nil {
+  let d = decimal.new(coefficient: 1_234_567, exponent: -2)
+  decimal.format(d: d, thousands: "", decimal_separator: ".")
+  |> should.equal("12345.67")
+}
+
+pub fn format_short_integer_test() -> Nil {
+  let d = decimal.from_int(n: 42)
+  decimal.format(d: d, thousands: ",", decimal_separator: ".")
+  |> should.equal("42")
+}
+
+pub fn format_zero_test() -> Nil {
+  decimal.format(d: decimal.zero(), thousands: ",", decimal_separator: ".")
+  |> should.equal("0")
+}
+
 // --- Sign predicates -----------------------------------------------------
 
 pub fn is_positive_test() -> Nil {

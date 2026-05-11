@@ -22,6 +22,7 @@
 
 import gleam/bool
 import gleam/int
+import gleam/list
 import gleam/order
 import gleam/result
 import gleam/string
@@ -244,6 +245,76 @@ pub fn to_string(d d: Decimal) -> String {
     0 -> render_zero(d.exponent)
     _ -> render_nonzero(d.coefficient, d.exponent)
   }
+}
+
+/// Render a `Decimal` with custom thousands and decimal separators.
+///
+/// ```gleam
+/// format(d, thousands: ",", decimal_separator: ".")  // "1,234.56"
+/// format(d, thousands: ".", decimal_separator: ",")  // "1.234,56" (German)
+/// format(d, thousands: "",  decimal_separator: ".")  // "1234.56"
+/// ```
+///
+/// Equivalent to [`to_string`](#to_string) when `thousands` is empty
+/// and `decimal_separator` is `"."`.
+pub fn format(
+  d d: Decimal,
+  thousands thousands: String,
+  decimal_separator decimal_separator: String,
+) -> String {
+  let raw = to_string(d: d)
+  let sign_prefix = case d.coefficient < 0 {
+    True -> "-"
+    False -> ""
+  }
+  let unsigned = case sign_prefix {
+    "" -> raw
+    _ -> string.drop_start(raw, 1)
+  }
+  let body =
+    inject_thousands(
+      unsigned: unsigned,
+      thousands: thousands,
+      decimal_separator: decimal_separator,
+    )
+  sign_prefix <> body
+}
+
+fn inject_thousands(
+  unsigned unsigned: String,
+  thousands thousands: String,
+  decimal_separator decimal_separator: String,
+) -> String {
+  case string.split(unsigned, ".") {
+    [integer_part] -> group_integer(integer_part, thousands)
+    [integer_part, fraction_part] ->
+      group_integer(integer_part, thousands)
+      <> decimal_separator
+      <> fraction_part
+    _ -> unsigned
+  }
+}
+
+fn group_integer(digits: String, separator: String) -> String {
+  use <- bool.guard(when: separator == "", return: digits)
+  let chars = string.to_graphemes(digits)
+  let length = list.length(chars)
+  let groups = group_right(chars: chars, length: length, acc: [])
+  groups
+  |> list.map(string.concat)
+  |> string.join(with: separator)
+}
+
+fn group_right(
+  chars chars: List(String),
+  length length: Int,
+  acc acc: List(List(String)),
+) -> List(List(String)) {
+  use <- bool.guard(when: length <= 3, return: [chars, ..acc])
+  let head_size = length - 3
+  let head = list.take(chars, head_size)
+  let tail = list.drop(chars, head_size)
+  group_right(chars: head, length: head_size, acc: [tail, ..acc])
 }
 
 fn render_zero(exp: Int) -> String {
