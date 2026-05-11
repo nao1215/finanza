@@ -1,6 +1,6 @@
 name = "finanza"
 version = "0.1.0"
-description = "Decimal arithmetic, currency, interest, and payment card primitives for Gleam."
+description = "Decimal arithmetic, currency formatting, time-value-of-money, and payment-card helpers for Gleam."
 licences = ["MIT"]
 repository = { type = "github", user = "nao1215", repo = "finanza" }
 links = [
