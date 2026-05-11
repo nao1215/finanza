@@ -187,7 +187,11 @@ fn jcb_matches(pan: String, length: Int) -> Bool {
 }
 
 fn diners_matches(pan: String, length: Int) -> Bool {
-  use <- bool.guard(when: length != 14, return: False)
+  // Diners Club International numbers per ISO/IEC 7812-1 are 14–19
+  // digits long. Stripe / Braintree publish 16-digit Diners test
+  // PANs (e.g. `3056930009020004`); restricting to length 14 only
+  // wrongly classifies those as `Unknown`.
+  use <- bool.guard(when: length < 14 || length > 19, return: False)
   prefix_in_range(pan: pan, prefix_len: 3, low: 300, high: 305)
   || starts_with(pan, "36")
   || starts_with(pan, "38")
