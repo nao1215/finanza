@@ -179,6 +179,22 @@ pub fn mask_rejects_empty_test() -> Nil {
   |> should.equal(Error(card.EmptyInput))
 }
 
+pub fn mask_amex_segment_aware_test() -> Nil {
+  // 15-digit AMEX: keep_first=4, keep_last=4, group_size=4.
+  // Old behaviour leaked the last "0005" into the previous block as
+  // "***0 005". Segment-aware grouping keeps the trailing 4 intact.
+  card.mask(pan: "378282246310005", options: card.mask_defaults())
+  |> should.equal(Ok("3782 **** *** 0005"))
+}
+
+pub fn mask_diners_segment_aware_test() -> Nil {
+  // 14-digit Diners Club. keep_first=4, keep_last=4, group_size=4.
+  // Mask block is 6 chars ("******"); chunked left-to-right that's
+  // a "****" followed by "**".
+  card.mask(pan: "30569309025904", options: card.mask_defaults())
+  |> should.equal(Ok("3056 **** ** 5904"))
+}
+
 // --- BIN / last four ---------------------------------------------------
 
 pub fn last_four_test() -> Nil {

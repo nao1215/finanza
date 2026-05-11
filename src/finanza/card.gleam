@@ -325,6 +325,12 @@ pub fn with_group_separator(
 
 /// Mask a PAN, preserving the configured number of leading and
 /// trailing digits and grouping the output.
+///
+/// Grouping is segment-aware: the kept-first block, the mask block,
+/// and the kept-last block are grouped independently. This keeps the
+/// kept regions intact on irregular-length cards (15-digit AMEX,
+/// 14-digit Diners Club) instead of letting their final digit bleed
+/// into the next group.
 pub fn mask(
   pan pan: String,
   options options: MaskOptions,
@@ -333,54 +339,54 @@ pub fn mask(
   use <- bool.guard(when: normalised == "", return: Error(EmptyInput))
   use _ <- result.try(digits_only(normalised))
   let length = string.length(normalised)
-  let masked = mask_chars(pan: normalised, length: length, options: options)
-  Ok(group_string(
-    s: masked,
-    group_size: options.group_size,
-    separator: options.group_separator,
-  ))
+  let keep_first = clamp(value: options.keep_first, low: 0, high: length)
+  let keep_last =
+    clamp(value: options.keep_last, low: 0, high: length - keep_first)
+  let mask_count = length - keep_first - keep_last
+  let first_block = string.slice(normalised, 0, keep_first)
+  let mask_block = string.repeat(options.mask_char, mask_count)
+  let last_block = string.slice(normalised, length - keep_last, keep_last)
+  // Group size <= 0 disables grouping: emit segments with no
+  // separator so callers asking explicitly for an ungrouped string
+  // get exactly that.
+  let separator = case options.group_size <= 0 {
+    True -> ""
+    False -> options.group_separator
+  }
+  let segments =
+    [first_block, mask_block, last_block]
+    |> list.filter(keeping: fn(s) { s != "" })
+    |> list.flat_map(with: fn(seg) {
+      chunks(value: seg, size: options.group_size)
+    })
+  Ok(string.join(segments, with: separator))
 }
 
-fn mask_chars(
-  pan pan: String,
-  length length: Int,
-  options options: MaskOptions,
-) -> String {
-  pan
-  |> string.to_graphemes
-  |> list.index_map(fn(char, index) {
-    case index < options.keep_first || index >= length - options.keep_last {
-      True -> char
-      False -> options.mask_char
-    }
-  })
-  |> string.concat
+fn clamp(value value: Int, low low: Int, high high: Int) -> Int {
+  use <- bool.guard(when: value < low, return: low)
+  use <- bool.guard(when: value > high, return: high)
+  value
 }
 
-fn group_string(
-  s s: String,
-  group_size group_size: Int,
-  separator separator: String,
-) -> String {
-  use <- bool.guard(when: group_size <= 0, return: s)
-  let chars = string.to_graphemes(s)
-  group_chars(chars: chars, group_size: group_size, acc: [])
+fn chunks(value value: String, size size: Int) -> List(String) {
+  use <- bool.guard(when: size <= 0, return: [value])
+  let chars = string.to_graphemes(value)
+  chunks_loop(chars: chars, size: size, acc: [])
   |> list.reverse
   |> list.map(string.concat)
-  |> string.join(with: separator)
 }
 
-fn group_chars(
+fn chunks_loop(
   chars chars: List(String),
-  group_size group_size: Int,
+  size size: Int,
   acc acc: List(List(String)),
 ) -> List(List(String)) {
   case chars {
     [] -> acc
     _ -> {
-      let head = list.take(chars, group_size)
-      let tail = list.drop(chars, group_size)
-      group_chars(chars: tail, group_size: group_size, acc: [head, ..acc])
+      let head = list.take(chars, size)
+      let tail = list.drop(chars, size)
+      chunks_loop(chars: tail, size: size, acc: [head, ..acc])
     }
   }
 }
