@@ -14,5 +14,5 @@
 /// The package version string. Useful for runtime diagnostics and
 /// version reporting in dependent applications.
 pub fn version() -> String {
-  "0.1.0"
+  "0.1.1"
 }
