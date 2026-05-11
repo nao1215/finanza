@@ -62,6 +62,21 @@ unwrap_used = "error"
   "short_variable_name",
   "unused_exports",
 ]
+# dig-bug exploratory tests mix Result variants in case expressions
+# deliberately to assert algebraic properties; the discarded error
+# branches are intentional shapes for PBT, not bug-prone code.
+"test/dig_round*.gleam" = [
+  "assert_ok_pattern",
+  "deep_nesting",
+  "discarded_result",
+  "label_possible",
+  "missing_labels",
+  "missing_type_annotation",
+  "prefer_guard_clause",
+  "short_variable_name",
+  "thrown_away_error",
+  "unused_exports",
+]
 # Decimal/Interest numeric code uses conventional short math names (a, b, n, r, p)
 "src/finanza/decimal.gleam" = ["short_variable_name"]
 "src/finanza/interest.gleam" = ["short_variable_name"]
