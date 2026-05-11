@@ -9,6 +9,32 @@ and this project is expected to follow [Semantic Versioning](https://semver.org/
 
 ### Added
 
+- `finanza/decimal.format` — render a `Decimal` with configurable
+  thousands and decimal separators (`"1,234.56"`, `"1.234,56"`,
+  `"1234.56"`).
+- `finanza/currency.with_minor_units` — `FormatOptions` toggle (default
+  `True`) that rescales a `Money` amount to the currency's minor-unit
+  exponent before rendering, so `currency.new(decimal.from_int(200_000),
+  catalog.usd())` renders as `"$200,000.00"` rather than `"$200000"`.
+
+### Changed
+
+- `finanza/currency` exposes `currency_of(m)` instead of the awkward
+  `currency.currency(m)`. The new name reads cleanly at the call site.
+- `finanza/card.mask` now groups the kept-first, masked-middle, and
+  kept-last regions independently. On 15-digit AMEX or 14-digit Diners
+  Club PANs the kept-last four digits stay in one block (e.g.
+  `"3782 **** *** 0005"`) instead of being split across groups
+  (`"3782 **** ***0 005"`).
+
+### Removed
+
+- Internal `interest.periods_bound/0` placeholder. It was a dead
+  function that existed only to anchor the `gleam/int` import; that
+  import is now justified by genuine uses inside the module.
+
+### Added (initial release)
+
 - Initial scaffold for the `finanza` package.
 - `finanza/decimal`: opaque `Decimal` type and arbitrary-precision fixed-point
   arithmetic (`add`, `subtract`, `multiply`, `divide`, `negate`, `abs`,

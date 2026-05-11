@@ -72,6 +72,7 @@ pub opaque type FormatOptions {
     decimal_separator: String,
     negative_style: NegativeStyle,
     show_currency_code: Bool,
+    minor_units: Bool,
   )
 }
 
@@ -154,8 +155,10 @@ pub fn amount(m m: Money) -> decimal.Decimal {
   m.amount
 }
 
-/// The currency component of a `Money`.
-pub fn currency(m m: Money) -> Currency {
+/// The currency component of a `Money`. Named `currency_of` to avoid
+/// a `currency.currency(m)` call site, which reads awkwardly given
+/// the module name.
+pub fn currency_of(m m: Money) -> Currency {
   m.currency
 }
 
@@ -295,7 +298,9 @@ pub fn to_string(m m: Money) -> String {
 
 /// Default [`FormatOptions`](#FormatOptions): symbol prefix, `,`
 /// thousands separator, `.` decimal separator, leading minus sign,
-/// no currency code suffix.
+/// no currency code suffix, and the amount is rescaled to the
+/// currency's minor-unit exponent (so USD always renders with two
+/// cents, JPY with none, etc.).
 pub fn default_format() -> FormatOptions {
   FormatOptions(
     symbol_position: Prefix,
@@ -303,6 +308,7 @@ pub fn default_format() -> FormatOptions {
     decimal_separator: ".",
     negative_style: MinusSign,
     show_currency_code: False,
+    minor_units: True,
   )
 }
 
@@ -346,21 +352,57 @@ pub fn with_currency_code(
   FormatOptions(..options, show_currency_code: show)
 }
 
+/// Toggle whether the amount is rescaled to the currency's
+/// minor-unit exponent before rendering. Defaults to `True`; pass
+/// `False` to preserve the amount's original precision (useful when
+/// the value carries finer-than-minor digits, e.g. for an FX rate
+/// or a unit price).
+pub fn with_minor_units(
+  options options: FormatOptions,
+  enabled enabled: Bool,
+) -> FormatOptions {
+  FormatOptions(..options, minor_units: enabled)
+}
+
 /// Render a money value with the given [`FormatOptions`](#FormatOptions).
+///
+/// By default the amount is rescaled to the currency's minor-unit
+/// exponent (so $12 renders as `$12.00` and ¥1234 as `¥1,234`). Call
+/// [`with_minor_units`](#with_minor_units) with `False` to preserve
+/// the amount's original precision.
 pub fn format(m m: Money, options options: FormatOptions) -> String {
-  let raw = decimal.to_string(decimal.absolute(m.amount))
+  let rescaled =
+    scale_for_render(amount: m.amount, currency: m.currency, options: options)
+  let raw = decimal.to_string(decimal.absolute(rescaled))
   let body = inject_separators(raw, options)
   let with_symbol =
     wrap_with_symbol(body: body, currency: m.currency, options: options)
   let signed =
     wrap_for_sign(
       body: with_symbol,
-      is_negative: decimal.is_negative(m.amount),
+      is_negative: decimal.is_negative(rescaled),
       options: options,
     )
   case options.show_currency_code {
     True -> signed <> " " <> m.currency.code
     False -> signed
+  }
+}
+
+fn scale_for_render(
+  amount amount: decimal.Decimal,
+  currency currency: Currency,
+  options options: FormatOptions,
+) -> decimal.Decimal {
+  use <- bool.guard(when: !options.minor_units, return: amount)
+  let target_exponent = -currency.exponent
+  case decimal.rescale(amount, target_exponent, rounding.HalfEven) {
+    Ok(scaled) -> scaled
+    // PrecisionExceeded: fall back to the original amount so that
+    // formatting never panics on an over-precise input. The numeric
+    // value is preserved; only the cosmetic rescaling is skipped.
+    Error(decimal.PrecisionExceeded) -> amount
+    Error(decimal.DivisionByZero) -> amount
   }
 }
 
