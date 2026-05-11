@@ -77,6 +77,21 @@ unwrap_used = "error"
   "thrown_away_error",
   "unused_exports",
 ]
+# Property-based test predicates mix Result variants in case expressions
+# deliberately (the predicate cares about Ok/Error symmetry). Relax the
+# same rules as the dig-bug suites.
+"test/property/*.gleam" = [
+  "assert_ok_pattern",
+  "deep_nesting",
+  "discarded_result",
+  "label_possible",
+  "missing_labels",
+  "missing_type_annotation",
+  "prefer_guard_clause",
+  "short_variable_name",
+  "thrown_away_error",
+  "unused_exports",
+]
 # Decimal/Interest numeric code uses conventional short math names (a, b, n, r, p)
 "src/finanza/decimal.gleam" = ["short_variable_name"]
 "src/finanza/interest.gleam" = ["short_variable_name"]

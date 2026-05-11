@@ -7,79 +7,57 @@ and this project is expected to follow [Semantic Versioning](https://semver.org/
 
 ## [Unreleased]
 
-### Breaking changes (API consistency pass)
+## [0.1.0] - 2026-05-11
 
-These rename a small number of public functions / arguments to remove
-naming inconsistencies before 0.1.0. Adapt call sites accordingly.
-
-- `finanza/card.expiry_valid` now takes two `#(month, year)` tuples
-  (`expiry` and `today`) instead of four labelled `Int`s. The original
-  shape was prone to silent argument swaps; the tuple form makes the
-  pairing explicit at the call site.
-- `finanza/card.mask_defaults` is renamed to `default_mask` so it
-  matches `finanza/currency.default_format` (`default_X` everywhere
-  rather than `default_X` / `X_defaults`).
-- `finanza/currency.new` (Money constructor) is renamed to `new_money`
-  so it pairs with `new_currency` and the `currency.` prefix no longer
-  appears to return the wrong type.
-- `finanza/currency.with_currency_code` now uses the label `enabled:`
-  instead of `show:`, matching `with_minor_units(enabled:)`.
+Initial release. The four modules below cover decimal arithmetic,
+currency / money handling, time-value-of-money calculations, and
+payment-card primitives, all behind opaque types with explicit
+rounding modes. The package targets both Erlang and JavaScript.
 
 ### Added
 
-- `finanza/decimal.format` — render a `Decimal` with configurable
-  thousands and decimal separators (`"1,234.56"`, `"1.234,56"`,
-  `"1234.56"`).
-- `finanza/currency.with_minor_units` — `FormatOptions` toggle (default
-  `True`) that rescales a `Money` amount to the currency's minor-unit
-  exponent before rendering, so `currency.new_money(decimal.from_int(200_000),
-  catalog.usd())` renders as `"$200,000.00"` rather than `"$200000"`.
-
-### Changed
-
-- `finanza/currency` exposes `currency_of(m)` instead of the awkward
-  `currency.currency(m)`. The new name reads cleanly at the call site.
-- `finanza/card.mask` now groups the kept-first, masked-middle, and
-  kept-last regions independently. On 15-digit AMEX or 14-digit Diners
-  Club PANs the kept-last four digits stay in one block (e.g.
-  `"3782 **** *** 0005"`) instead of being split across groups
-  (`"3782 **** ***0 005"`).
-
-### Removed
-
-- Internal `interest.periods_bound/0` placeholder. It was a dead
-  function that existed only to anchor the `gleam/int` import; that
-  import is now justified by genuine uses inside the module.
-
-### Added (initial release)
-
-- Initial scaffold for the `finanza` package.
-- `finanza/decimal`: opaque `Decimal` type and arbitrary-precision fixed-point
-  arithmetic (`add`, `subtract`, `multiply`, `divide`, `negate`, `abs`,
-  `round`, `truncate`, `rescale`, `compare`). Parsing via `from_string` and
-  rendering via `to_string`.
-- `finanza/decimal/rounding`: rounding `Mode` enum
-  (`HalfEven`, `HalfUp`, `HalfDown`, `Up`, `Down`, `Ceiling`, `Floor`).
-- `finanza/currency`: opaque `Currency` and `Money` types; arithmetic, ratio
-  allocation, and configurable formatting through `FormatOptions` builder.
-- `finanza/currency/catalog`: constructors for 15 major currencies
-  (USD/EUR/JPY/GBP/CHF/CAD/AUD/CNY/HKD/SGD/KRW/INR/BRL/MXN/ZAR), a
+- `finanza/decimal` — opaque `Decimal` (`coefficient × 10^exponent`)
+  with `from_int`, `from_string`, `new`, `to_string`, accessors,
+  predicates (`is_zero` / `is_positive` / `is_negative`), `negate`,
+  `absolute`, `add`, `subtract`, `multiply`, `divide`, `round`,
+  `truncate`, `rescale`, `compare`, `equal`, and a `format` helper
+  with configurable thousands / decimal separators.
+- `finanza/decimal/rounding` — rounding `Mode` enum with the seven
+  IBM Decimal modes (`HalfEven`, `HalfUp`, `HalfDown`, `Up`, `Down`,
+  `Ceiling`, `Floor`).
+- `finanza/currency` — opaque `Currency` and `Money` with smart
+  constructors (`new_currency`, `new_money`, `from_minor`), arithmetic
+  (`add`, `subtract`, `multiply`, `divide`, `negate`), proportional
+  `allocate`, comparison, equality, ISO-style `to_string`, and a full
+  `FormatOptions` builder (symbol position, separators, negative
+  style, currency-code suffix, minor-unit normalisation).
+- `finanza/currency/catalog` — constructors for 15 major currencies
+  (USD/EUR/JPY/GBP/CHF/CAD/AUD/CNY/HKD/SGD/KRW/INR/BRL/MXN/ZAR);
   snapshot as of 2026-05.
-- `finanza/interest`: time-value-of-money primitives
-  (`simple_interest`, `compound_interest`, `future_value`, `present_value`,
-  `payment`, `effective_annual_rate`).
-- `finanza/interest/amortization`: opaque `Period` type and `schedule`
-  generator for amortizing loans.
-- `finanza/card`: payment card primitives — Luhn check, brand detection
-  (Visa/MC/Amex/Discover/JCB/DinersClub/UnionPay), masking with the opaque
-  `MaskOptions` builder, BIN/last-four extraction, expiry parsing and
-  validation.
+- `finanza/interest` — `simple_interest`, `compound_interest`,
+  `future_value`, `present_value`, `payment`, `effective_annual_rate`.
+- `finanza/interest/amortization` — opaque `Period` and `schedule`
+  generator that closes the final balance to zero exactly.
+- `finanza/card` — `normalize`, `luhn_valid`, `detect_brand`,
+  `validate`, segment-aware `mask` with the `MaskOptions` builder,
+  `last_four`, `bin`, `parse_expiry`, and `expiry_valid` that takes
+  two `#(month, year)` tuples (so month/year order cannot be silently
+  swapped). Brand detection covers Visa, Mastercard (incl. 2-series),
+  American Express, Discover, JCB, Diners Club (14–19 digits per
+  ISO/IEC 7812-1), and UnionPay.
 
 ### Notes
 
-- Currency catalog and card brand IIN ranges are static snapshots; the
-  library does not track ISO 4217 or BIN-database updates dynamically.
+- Currency catalogue and brand IIN ranges are static snapshots; the
+  library does not track ISO 4217 or BIN-database updates
+  dynamically. For currencies outside the catalogue, construct your
+  own with `currency.new_currency`.
 - On the JavaScript target, `Decimal` coefficients are bounded by
-  `Number.MAX_SAFE_INTEGER` (2^53 - 1). Operations that would overflow this
-  bound return `PrecisionExceeded`. The Erlang target uses arbitrary
-  precision integers and is not affected.
+  `Number.MAX_SAFE_INTEGER` (2^53 − 1). Arithmetic that would
+  overflow this bound returns `decimal.PrecisionExceeded`; parsing a
+  value beyond it returns `decimal.ParsedValueTooLarge`. Behaviour is
+  identical on the Erlang target (where Int is arbitrary precision)
+  so cross-target code does not have to special-case either runtime.
+- Property-based, metamorphic, fuzzing, and differential test suites
+  ship under `test/property/` and `test/dig_round*` and run on every
+  CI build.
