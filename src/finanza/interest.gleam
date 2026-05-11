@@ -338,11 +338,3 @@ fn check_digits(d: Int) -> Result(Nil, InterestError) {
   use <- bool.guard(when: d < 0, return: Error(NegativeDigits))
   Ok(Nil)
 }
-
-// `int.absolute_value` is referenced by surrounding modules; importing
-// `gleam/int` here keeps the file's import set in lock-step with the
-// growth-factor and check helpers above.
-@internal
-pub fn periods_bound() -> Int {
-  int.max(0, max_periods)
-}
