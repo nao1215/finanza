@@ -46,6 +46,14 @@ pub type ParseError {
   MultipleDecimalPoints
   /// The input contained more than one sign character.
   MultipleSigns
+  /// The input contained no digits (e.g. `"+"`, `"."`, `"-."`).
+  NoDigits
+  /// The parsed coefficient would exceed `±9_007_199_254_740_991`
+  /// (the JavaScript-safe integer ceiling). Such a value cannot be
+  /// represented faithfully on the JavaScript target; rather than
+  /// silently corrupt it (and emit unparseable strings from
+  /// [`to_string`](#to_string)), parsing fails fast.
+  ParsedValueTooLarge
 }
 
 /// Errors returned by arithmetic operations.
@@ -109,6 +117,7 @@ pub fn from_string(input input: String) -> Result(Decimal, ParseError) {
     fraction_digits: 0,
     saw_dot: False,
     saw_sign: False,
+    saw_digit: False,
   ))
 }
 
@@ -121,14 +130,24 @@ type ParseState {
     fraction_digits: Int,
     saw_dot: Bool,
     saw_sign: Bool,
+    saw_digit: Bool,
   )
 }
 
 fn parse_loop(state state: ParseState) -> Result(Decimal, ParseError) {
   case state.chars {
-    [] -> Ok(Decimal(state.sign * state.digits, -state.fraction_digits))
+    [] -> finalize_parse(state)
     [head, ..tail] -> parse_step(state: state, char: head, rest: tail)
   }
+}
+
+fn finalize_parse(state: ParseState) -> Result(Decimal, ParseError) {
+  use <- bool.guard(when: !state.saw_digit, return: Error(NoDigits))
+  use <- bool.guard(
+    when: int.absolute_value(state.digits) > max_safe_coefficient,
+    return: Error(ParsedValueTooLarge),
+  )
+  Ok(Decimal(state.sign * state.digits, -state.fraction_digits))
 }
 
 fn parse_step(
@@ -221,6 +240,7 @@ fn handle_digit(
       position: state.position + 1,
       digits: state.digits * 10 + value,
       fraction_digits: new_fraction,
+      saw_digit: True,
     ),
   )
 }
