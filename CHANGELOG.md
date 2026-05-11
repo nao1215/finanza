@@ -7,6 +7,13 @@ and this project is expected to follow [Semantic Versioning](https://semver.org/
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-05-11
+
+### Fixed
+
+- Release workflow now publishes to Hex with the required
+  non-semantic-versioning acknowledgement piped into `gleam publish`.
+
 ## [0.1.0] - 2026-05-11
 
 Initial release. The four modules below cover decimal arithmetic,
