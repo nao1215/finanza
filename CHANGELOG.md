@@ -7,6 +7,55 @@ and this project is expected to follow [Semantic Versioning](https://semver.org/
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-05-12
+
+### Added
+
+- `test/dig_round6_metamorphic_test.gleam` — second metamorphic pass:
+  randomised algebraic laws (associativity, distributivity, transitivity,
+  commutativity at fixed pools) for `decimal` and `currency`, plus
+  allocate sum-preservation for arbitrary ratios, amortisation
+  invariants, and card-edge metamorphic relations.
+- `test/dig_round7_fuzzing_test.gleam` — second fuzzing pass against
+  the arithmetic and combinator surfaces round 4 did not touch
+  (decimal add/sub/mul/div, round/truncate/rescale incl. extreme
+  digits, interest formulas, amortization.schedule, currency.new_currency,
+  currency.allocate, from_minor/to_minor at extreme units, card.bin /
+  card.last_four, and chained arithmetic).
+- `test/dig_round8_property_test.gleam` — randomised property tests
+  for properties round 6 covered only at fixed pools (associativity,
+  distributivity, transitivity), plus randomised interest /
+  amortisation invariants no earlier round exercised at random
+  inputs.
+- `test/dig_round9_boundary_test.gleam` — additional boundary tests:
+  the `2^53 − 1` precision cliff for add/sub/multiply/negate/parser,
+  large negative exponents, JPY rounding direction across modes,
+  high-precision (8-decimal) currency, allocate ratio errors,
+  currency.divide-by-zero, currency mismatch on add/compare, card
+  validate at minimum (14-digit Diners) and over-maximum lengths.
+- `test/dig_round10_differential_test.gleam` — additional differential
+  tests vs a Python `decimal` simulation that mirrors finanza's
+  `pow_loop` algorithm: decimal subtract, divide at multiple
+  precisions, the five rounding modes round 5 did not exercise, three
+  PMT scenarios, FV / PV / EAR at additional rates, amortisation
+  period-1, brand detection for 2-series Mastercard, JCB, 14-digit
+  Diners, UnionPay.
+
+### Notes
+
+- No source changes in this release. The package's public API and
+  runtime behaviour are unchanged from `v0.1.1`.
+- Test count grew from ~295 to **449**. Linux / macOS / Windows ×
+  Erlang / JavaScript CI matrix is green.
+- Two upstream issues were filed during this dig-bug session and
+  remain open for future fixes: nao1215/finanza#7 (additive identity
+  `add(d, zero())` overflows for `d` with large positive exponent)
+  and nao1215/finanza#9 (`max_work_digits = 6` cap causes
+  `interest.payment` / `future_value` / `present_value` /
+  `effective_annual_rate` to diverge from textbook full-precision
+  values by 0.01–0.04 cents on long-horizon scenarios). No fix is
+  shipped in this release; both are tracked for v0.3.
+
 ## [0.1.1] - 2026-05-11
 
 ### Fixed
