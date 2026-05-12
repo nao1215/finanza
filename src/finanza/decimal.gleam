@@ -411,10 +411,29 @@ pub fn absolute(d d: Decimal) -> Decimal {
 // --- Arithmetic ----------------------------------------------------------
 
 /// Add two decimals.
+///
+/// When one operand is zero the result is just the other operand —
+/// we short-circuit without going through `align`. Without the
+/// short-circuit, `align` would try to scale the smaller-exponent
+/// operand up to the larger's exponent (e.g. `1 × 10^20` for
+/// `new(1, 20) + zero()`), which can exceed `max_safe_coefficient`
+/// and surface a spurious `PrecisionExceeded` despite the
+/// mathematical result fitting trivially. When both operands are
+/// zero we still return zero, but with the smaller of the two
+/// exponents so that `add(a, b) == add(b, a)` holds at the level of
+/// structural equality (the same invariant `align` provided before).
 pub fn add(a a: Decimal, b b: Decimal) -> Result(Decimal, ArithmeticError) {
-  use #(ac, bc, target) <- result.try(align(a, b))
-  use sum <- result.map(check_precision(ac + bc))
-  Decimal(coefficient: sum, exponent: target)
+  case a.coefficient, b.coefficient {
+    0, 0 ->
+      Ok(Decimal(coefficient: 0, exponent: int.min(a.exponent, b.exponent)))
+    0, _ -> Ok(b)
+    _, 0 -> Ok(a)
+    _, _ -> {
+      use #(ac, bc, target) <- result.try(align(a, b))
+      use sum <- result.map(check_precision(ac + bc))
+      Decimal(coefficient: sum, exponent: target)
+    }
+  }
 }
 
 /// Subtract `b` from `a`.

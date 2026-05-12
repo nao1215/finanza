@@ -245,6 +245,39 @@ pub fn add_mixed_precision_test() -> Nil {
   |> should.equal("1.505")
 }
 
+// Regression for #7: add(d, zero()) is the identity for every d,
+// including operands whose exponent would force align to scale the
+// coefficient past max_safe_coefficient (e.g. new(1, 20) would need
+// 1 × 10^20 after alignment, which is well over 2^53 - 1). The zero
+// short-circuit returns the other operand directly.
+pub fn add_large_positive_exponent_plus_zero_returns_operand_test() -> Nil {
+  let big = decimal.new(coefficient: 1, exponent: 20)
+  let assert Ok(sum) = decimal.add(big, decimal.zero())
+  decimal.equal(sum, big)
+  |> should.be_true
+}
+
+pub fn add_zero_plus_large_positive_exponent_returns_operand_test() -> Nil {
+  let big = decimal.new(coefficient: 1, exponent: 20)
+  let assert Ok(sum) = decimal.add(decimal.zero(), big)
+  decimal.equal(sum, big)
+  |> should.be_true
+}
+
+pub fn subtract_large_positive_exponent_minus_zero_returns_operand_test() -> Nil {
+  let big = decimal.new(coefficient: 1, exponent: 20)
+  let assert Ok(diff) = decimal.subtract(big, decimal.zero())
+  decimal.equal(diff, big)
+  |> should.be_true
+}
+
+pub fn add_large_negative_exponent_plus_zero_returns_operand_test() -> Nil {
+  let tiny = decimal.new(coefficient: 1, exponent: -20)
+  let assert Ok(sum) = decimal.add(tiny, decimal.zero())
+  decimal.equal(sum, tiny)
+  |> should.be_true
+}
+
 pub fn subtract_test() -> Nil {
   let assert Ok(a) = decimal.from_string("10.00")
   let assert Ok(b) = decimal.from_string("2.50")
