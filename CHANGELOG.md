@@ -7,6 +7,8 @@ and this project is expected to follow [Semantic Versioning](https://semver.org/
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-12
+
 ### Documentation
 
 - `finanza/interest`: document the 6-decimal-digit internal working
