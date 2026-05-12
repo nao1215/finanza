@@ -7,6 +7,22 @@ and this project is expected to follow [Semantic Versioning](https://semver.org/
 
 ## [Unreleased]
 
+### Fixed
+
+- `decimal.add` no longer returns `Error(PrecisionExceeded)` for the
+  additive-identity case `add(d, zero())` (and the symmetric
+  `add(zero(), d)`) when `d` has an exponent large enough that
+  realigning it to zero's exponent would overflow
+  `max_safe_coefficient = 2^53 − 1`. For example,
+  `decimal.add(decimal.new(coefficient: 1, exponent: 20),
+  decimal.zero())` now returns `Ok(d)` instead of failing. The
+  alignment step is now skipped entirely when either coefficient is
+  zero (the mathematical result is just the other operand), and the
+  both-zero case picks the smaller exponent to keep `add(a, b) ==
+  add(b, a)` at the level of structural equality. `subtract`
+  benefits transitively via its existing `add(a, negate(b))`
+  definition. (#7)
+
 ## [0.2.0] - 2026-05-12
 
 ### Added
