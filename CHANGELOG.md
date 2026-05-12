@@ -7,6 +7,25 @@ and this project is expected to follow [Semantic Versioning](https://semver.org/
 
 ## [Unreleased]
 
+### Documentation
+
+- `finanza/interest`: document the 6-decimal-digit internal working
+  precision cap shared by `future_value`, `present_value`,
+  `payment`, `effective_annual_rate`, and `compound_interest`. The
+  cap is in place so each iterative `multiply` keeps coefficients
+  under 2^53 - 1 (the JavaScript safe-integer ceiling enforced by
+  `finanza/decimal`). The new module-level **Precision** section
+  shows concrete drift versus textbook (Python `decimal` prec=50,
+  Excel, `numpy_financial`) values: short-horizon / exact-rate
+  inputs match to the cent, but long horizons with inexact rates
+  (e.g. PMT on a 15-year monthly mortgage) drift by 0.01–0.04 in
+  `digits = 2` outputs. Per-function docstrings on
+  `future_value`, `present_value`, `payment`, and
+  `effective_annual_rate` now point readers at the section. The
+  reference is **not** safe for regulated lending or any flow that
+  must match an external 50-digit reference until the cap is
+  raised in a follow-up. (#9)
+
 ### Fixed
 
 - `decimal.add` no longer returns `Error(PrecisionExceeded)` for the
