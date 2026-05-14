@@ -144,13 +144,17 @@ pub fn round_half_modes_negative_at_half_test() -> Nil {
 
 // --- PMT vs reference values (additional scenarios) -------------------
 
-// finanza caps internal precision at `max_work_digits = 6` (see
-// src/finanza/interest.gleam). All rates derived from divide are built
-// at 6 dp so they round-trip with finanza's internal precision exactly.
-// Expected outputs were produced by a Python `decimal` (prec=50)
-// simulation that mirrors finanza's pow_loop rounding, so any drift
-// here is a real regression in finanza's algorithm, not a Python /
-// finanza precision mismatch.
+// As of #9, finanza targets 7 internal working digits with adaptive
+// overflow handling in `pow_loop` (see src/finanza/interest.gleam),
+// up from the original 6-dp cap. Rates derived from divide here are
+// still built at 6 dp (matching the inputs of the previous regime)
+// to keep these scenarios reproducible across the bump. Pinned
+// expected outputs are what the current iterative-rounding
+// implementation produces. Python `decimal` prec=50 textbook
+// references still differ at `digits = 2` over long horizons where
+// the truncation of irrational rates (1/300, 0.035/12, ...) into a
+// finite decimal dominates the error budget; the drift is now
+// ≤ ~0.04 instead of the ~0.04–0.10 of the 6-dp regime.
 
 pub fn pmt_15y_fixed_4pct_test() -> Nil {
   // 15y fixed at 4 %/year, monthly. Principal 200_000, n=180. Rate
@@ -174,54 +178,64 @@ pub fn pmt_5y_auto_6pct_test() -> Nil {
 
 pub fn pmt_7y_at_3_5pct_test() -> Nil {
   // 7y at 3.5 %/year monthly. Principal 50_000, n=84. Rate 0.035/12
-  // at 6 dp = 0.002917.
+  // at 6 dp = 0.002917. Textbook (Python decimal prec=50) is 671.99;
+  // finanza with the 7-dp adaptive `pow_loop` lands at 672.00 (1 cent
+  // off, half the drift of the previous 6-dp regime which gave 672.01).
   let principal = d("50000")
   let assert Ok(rate) =
     decimal.divide(d("0.035"), d("12"), 6, rounding.HalfEven)
   let assert Ok(payment) = interest.payment(principal, rate, 84, 2)
   decimal.to_string(payment)
-  |> should.equal("672.01")
+  |> should.equal("672.00")
 }
 
 // --- FV / PV additional scenarios -------------------------------------
 
 pub fn fv_1000_at_5pct_for_10_periods_test() -> Nil {
-  // finanza-simulated reference: 1628.894000
+  // Textbook: 1628.894627 (Python decimal prec=50).
+  // finanza 7-dp adaptive: 1628.894600 (drift 0.000027, vs the
+  // previous 6-dp regime which produced 1628.894000 = drift 0.000627).
   let assert Ok(fv) = interest.future_value(d("1000"), d("0.05"), 10, 6)
   decimal.to_string(fv)
-  |> should.equal("1628.894000")
+  |> should.equal("1628.894600")
 }
 
 pub fn fv_500_at_2pct_for_24_periods_test() -> Nil {
-  // finanza-simulated reference: 804.219000
+  // Textbook 50-dp: 804.218754...
+  // finanza 7-dp adaptive: 804.218550.
   let assert Ok(fv) = interest.future_value(d("500"), d("0.02"), 24, 6)
   decimal.to_string(fv)
-  |> should.equal("804.219000")
+  |> should.equal("804.218550")
 }
 
 pub fn pv_1000_at_5pct_for_10_periods_test() -> Nil {
-  // finanza-simulated reference: 613.913490
+  // Textbook 50-dp: 613.913254...
+  // finanza 7-dp adaptive (with `future × (1/growth)`): 613.913260
+  // (drift 0.000006, down from 0.000236 in the 6-dp regime).
   let assert Ok(pv) = interest.present_value(d("1000"), d("0.05"), 10, 6)
   decimal.to_string(pv)
-  |> should.equal("613.913490")
+  |> should.equal("613.913260")
 }
 
 pub fn pv_5000_at_3pct_for_5_periods_test() -> Nil {
-  // finanza-simulated reference: 4313.044198
+  // Textbook 50-dp: 4313.043898...
+  // finanza 7-dp adaptive: 4313.043850.
   let assert Ok(pv) = interest.present_value(d("5000"), d("0.03"), 5, 6)
   decimal.to_string(pv)
-  |> should.equal("4313.044198")
+  |> should.equal("4313.043850")
 }
 
 // --- EAR for monthly / quarterly / daily compounding ------------------
 
-// All EAR outputs at 6 dp (matching finanza's internal precision cap
-// of 6 dp = `max_work_digits`).
+// All EAR outputs at 6 dp. Pinned values are finanza's current
+// 7-dp adaptive `pow_loop` output; comments note the textbook
+// reference and the residual drift.
 
 pub fn ear_5pct_monthly_test() -> Nil {
+  // Textbook: 0.051162. Exact match.
   let assert Ok(ear) = interest.effective_annual_rate(d("0.05"), 12, 6)
   decimal.to_string(ear)
-  |> should.equal("0.051166")
+  |> should.equal("0.051162")
 }
 
 pub fn ear_5pct_quarterly_test() -> Nil {
@@ -231,15 +245,17 @@ pub fn ear_5pct_quarterly_test() -> Nil {
 }
 
 pub fn ear_5pct_daily_test() -> Nil {
+  // Textbook: 0.051267. finanza: 0.051273 (drift 6 ppm).
   let assert Ok(ear) = interest.effective_annual_rate(d("0.05"), 365, 6)
   decimal.to_string(ear)
-  |> should.equal("0.051272")
+  |> should.equal("0.051273")
 }
 
 pub fn ear_10pct_monthly_test() -> Nil {
+  // Textbook: 0.104713. Exact match (previously 0.104706 in 6-dp regime).
   let assert Ok(ear) = interest.effective_annual_rate(d("0.10"), 12, 6)
   decimal.to_string(ear)
-  |> should.equal("0.104706")
+  |> should.equal("0.104713")
 }
 
 // --- Amortisation period-1 breakdown against the analytic formula -----
@@ -264,12 +280,12 @@ pub fn amortisation_period_1_small_test() -> Nil {
 }
 
 pub fn amortisation_period_1_large_test() -> Nil {
-  // principal=100000, rate=0.005, n=36, dg=2. finanza output: 3042.20.
-  // (Python full-precision PMT is 3042.19; the 1-cent gap is from the
-  // 6-dp work_digits cap in finanza's growth_factor.)
+  // principal=100000, rate=0.005, n=36, dg=2. Textbook PMT=3042.19;
+  // finanza with the 7-dp adaptive `pow_loop` now matches textbook
+  // exactly (the previous 6-dp regime gave 3042.20).
   let assert Ok(pmt) = interest.payment(d("100000"), d("0.005"), 36, 2)
   decimal.to_string(pmt)
-  |> should.equal("3042.20")
+  |> should.equal("3042.19")
 }
 
 // --- Additional brand detection ---------------------------------------

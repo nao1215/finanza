@@ -7,6 +7,32 @@ and this project is expected to follow [Semantic Versioning](https://semver.org/
 
 ## [Unreleased]
 
+### Changed
+
+- `finanza/interest`: internal working precision target raised from
+  6 to 7 decimal digits in the iterative `pow_loop`, with an
+  adaptive overflow guard that sheds per-step precision one digit
+  at a time when an upcoming `multiply` would push the coefficient
+  above `2^53 − 1` (the JavaScript safe-integer ceiling enforced
+  by `finanza/decimal`). The work-digit calculation is no longer
+  derived from the caller's `digits` argument, so PMT / FV / PV
+  / EAR at `digits = 2` now also benefit from the extra precision
+  — for the 36-month / 0.5 %-monthly amortising loan from the
+  README, `payment` now matches the Python `decimal` prec=50
+  textbook PMT (3042.19) instead of the previous 3042.20. EAR at
+  5 % nominal monthly and EAR at 10 % nominal monthly also become
+  exact to 6 dp (0.051162 and 0.104713 respectively). Long-horizon
+  scenarios (15-year monthly mortgages, 84-month auto loans)
+  improve by 1 cent each. (#9)
+
+- `finanza/interest.present_value`: computed as `future × (1 /
+  growth)` instead of `future / growth`. The internal `decimal.divide`
+  in the previous direct-divide path scaled the numerator by
+  `digits + work_digits` digits, which overflowed the 2^53 − 1
+  coefficient ceiling once `work_digits` reached 7. The inverse
+  formulation only scales the constant `1`, so the multiplication
+  by `future` happens with both factors already bounded. (#9)
+
 ## [0.3.0] - 2026-05-12
 
 ### Documentation
