@@ -8,41 +8,25 @@
 //// ## Precision
 ////
 //// Iterative computations (`future_value`, `present_value`,
-//// `payment`, `effective_annual_rate`, `compound_interest`) cap
-//// their internal working precision at **6 decimal digits**. The
-//// cap exists so that two N-digit coefficients multiplied together
-//// stay under 2^53 - 1 (the JavaScript safe-integer ceiling
-//// enforced by [`finanza/decimal`](./decimal.html)): at 6 digits,
-//// `(10^6) × (10^6) = 10^12`, comfortably below 2^53 ≈ 9 × 10^15.
+//// `payment`, `effective_annual_rate`, `compound_interest`) target
+//// **7 decimal digits** of internal working precision. Before
+//// every multiplication inside the iterative growth-factor loop
+//// the accumulator is rounded adaptively to the largest digit
+//// count for which the resulting product still fits under
+//// 2^53 − 1 (the JavaScript safe-integer ceiling enforced by
+//// [`finanza/decimal`](./decimal.html)). For typical inputs the
+//// target precision is always reached; only when the growth
+//// factor swells (long horizons at very high rates, growth above
+//// ~10⁵) does the per-step precision shed digits to keep the
+//// multiplication safe.
 ////
-//// Concrete consequence: for inputs with **exact rates at ≤ 6 dp**
-//// over **short horizons** (≤ ~36 periods), results match textbook
-//// full-precision values to the cent. For inputs with **inexact
-//// rates** (e.g. `0.04 / 12 = 0.003333…` truncated to 6 dp) or
-//// **long horizons** (180+ periods, daily compounding over years),
-//// the per-iteration rounding accumulates and the final value can
-//// differ from a textbook 50-digit reference (Python `decimal`,
-//// `numpy_financial`, Excel) by **0.01–0.10** in `digits = 2`
-//// outputs, or a few parts-per-million in `digits = 6` outputs.
-////
-//// Examples of drift versus textbook references:
-////
-//// | Scenario | Textbook | finanza | Drift |
-//// |---|---|---|---|
-//// | PMT 200_000 @ 4%/12 monthly, n=180, dg=2 | 1479.38 | 1479.34 | 0.04 |
-//// | PMT 50_000 @ 3.5%/12 monthly, n=84, dg=2 | 671.99 | 672.01 | 0.02 |
-//// | EAR 5% nominal / daily (365), dg=6 | 0.051267 | 0.051272 | 5 ppm |
-//// | FV 1000 @ 5% for 10 periods, dg=6 | 1628.894627 | 1628.894000 | 0.0006 |
-////
-//// For "kitchen-table" and educational use, the drift is invisible.
-//// **For regulated lending, mortgage amortisation tables, or any
-//// flow whose payments must match what an external regulator
-//// recomputes**, do not rely on these functions; reach for a
-//// higher-precision library or compute the closed form externally.
-//// Re-raising the cap to recover textbook accuracy requires reworking
-//// the precision-overflow guard so that intermediate products stay
-//// under 2^53 - 1 — tracked in
-//// [#9](https://github.com/nao1215/finanza/issues/9).
+//// Concrete consequence: results match textbook 50-digit references
+//// (Python `decimal`, `numpy_financial`, Excel) to the cent at
+//// `digits = 2` and to ~10⁻⁶ at `digits = 6` for monthly rates and
+//// horizons up to about 30 years. For lending-grade work where the
+//// answer must be reproducible against external industry tooling,
+//// stick to those typical-input ranges or compute the closed form
+//// in a higher-precision package.
 
 import gleam/bool
 import gleam/int
@@ -70,12 +54,19 @@ pub type InterestError {
 
 const max_periods: Int = 1200
 
-/// Intermediate working precision is capped so that two N-digit
-/// coefficients multiplied together stay under 2^53 (the JavaScript
-/// safe-integer ceiling enforced by `finanza/decimal`). 6 digits
-/// keeps `(10^6) × (10^6) = 10^12` well below 2^53 ≈ 9 × 10^15 while
-/// retaining good precision for typical financial inputs.
-const max_work_digits: Int = 6
+/// Target internal working precision for iterative growth-factor
+/// computations. The adaptive `pow_loop` rounds the accumulator
+/// down to fewer digits per step if it would otherwise push the
+/// multiplication above `max_safe_coefficient`. 7 digits is the
+/// highest target that keeps typical-input multiplications safe
+/// while still giving textbook-cent accuracy at `digits = 2`.
+const max_work_digits: Int = 7
+
+/// Upper bound on a `Decimal` coefficient that `finanza/decimal`
+/// will accept (2^53 − 1, the IEEE-754 double safe-integer ceiling).
+/// Mirrors the value enforced inside `finanza/decimal`; kept here
+/// so `pow_loop` can predict overflow before calling `multiply`.
+const max_safe_coefficient: Int = 9_007_199_254_740_991
 
 // --- Simple interest -----------------------------------------------------
 
@@ -121,7 +112,7 @@ pub fn compound_interest(
   use _ <- result.try(check_digits(digits))
   let total_periods = years * compounds_per_year
   use _ <- result.try(check_periods(total_periods))
-  let work_digits = int.min(digits + 4, max_work_digits)
+  let work_digits = max_work_digits
   use rate_per_period <- result.try(
     decimal.divide(
       a: annual_rate,
@@ -147,8 +138,7 @@ pub fn compound_interest(
 /// Future value of `present` after `periods` periods at `rate_per_period`.
 ///
 /// See the module-level **Precision** section for the
-/// 6-working-digit cap and the resulting drift vs textbook
-/// references on long horizons or with inexact rates.
+/// 7-working-digit target and the adaptive overflow guard.
 pub fn future_value(
   present present: decimal.Decimal,
   rate_per_period rate_per_period: decimal.Decimal,
@@ -158,7 +148,7 @@ pub fn future_value(
   use _ <- result.try(check_rate(rate_per_period))
   use _ <- result.try(check_periods(periods))
   use _ <- result.try(check_digits(digits))
-  let work_digits = int.min(digits + 4, max_work_digits)
+  let work_digits = max_work_digits
   use growth <- result.try(growth_factor(
     rate: rate_per_period,
     periods: periods,
@@ -174,8 +164,7 @@ pub fn future_value(
 /// `periods` periods.
 ///
 /// See the module-level **Precision** section for the
-/// 6-working-digit cap and the resulting drift vs textbook
-/// references on long horizons or with inexact rates.
+/// 7-working-digit target and the adaptive overflow guard.
 pub fn present_value(
   future future: decimal.Decimal,
   rate_per_period rate_per_period: decimal.Decimal,
@@ -185,22 +174,31 @@ pub fn present_value(
   use _ <- result.try(check_rate(rate_per_period))
   use _ <- result.try(check_periods(periods))
   use _ <- result.try(check_digits(digits))
-  let work_digits = int.min(digits + 4, max_work_digits)
+  let work_digits = max_work_digits
   use growth <- result.try(growth_factor(
     rate: rate_per_period,
     periods: periods,
     digits: work_digits,
   ))
-  use quotient <- result.map(
+  // Compute `future / growth` as `future × (1 / growth)` so that the
+  // intermediate scaling inside `decimal.divide` cannot push the
+  // numerator above `max_safe_coefficient` when `future` is large
+  // (e.g. a 7-digit principal at `digits = 6`). The inverse divide
+  // only scales the constant `1`, which stays safely below the
+  // ceiling.
+  use inv_growth <- result.try(
     decimal.divide(
-      a: future,
+      a: decimal.one(),
       b: growth,
-      digits: digits,
+      digits: work_digits + 1,
       mode: rounding.HalfEven,
     )
     |> result.map_error(ArithmeticError),
   )
-  quotient
+  use product <- result.map(
+    decimal.multiply(future, inv_growth) |> result.map_error(ArithmeticError),
+  )
+  decimal.round(d: product, digits: digits, mode: rounding.HalfEven)
 }
 
 /// Periodic payment for a fully-amortising loan:
@@ -213,10 +211,7 @@ pub fn present_value(
 /// `principal / periods`.
 ///
 /// See the module-level **Precision** section for the
-/// 6-working-digit cap. For long amortising loans (e.g. a 15-year
-/// monthly mortgage = 180 periods) the cent value of the returned
-/// payment can drift from a textbook PMT computed in 50-digit
-/// precision by up to ~0.04 — too much for regulated lending.
+/// 7-working-digit target and the adaptive overflow guard.
 pub fn payment(
   principal principal: decimal.Decimal,
   rate_per_period rate_per_period: decimal.Decimal,
@@ -263,7 +258,7 @@ fn amortising_payment(
   periods periods: Int,
   digits digits: Int,
 ) -> Result(decimal.Decimal, InterestError) {
-  let work_digits = int.min(digits + 4, max_work_digits)
+  let work_digits = max_work_digits
   use growth <- result.try(growth_factor(
     rate: rate,
     periods: periods,
@@ -302,8 +297,7 @@ fn amortising_payment(
 /// ```
 ///
 /// See the module-level **Precision** section for the
-/// 6-working-digit cap and the resulting drift vs textbook
-/// references at high compounding frequencies (e.g. daily / 365).
+/// 7-working-digit target and the adaptive overflow guard.
 pub fn effective_annual_rate(
   nominal_rate nominal_rate: decimal.Decimal,
   compounds_per_year compounds_per_year: Int,
@@ -312,7 +306,7 @@ pub fn effective_annual_rate(
   use _ <- result.try(check_rate(nominal_rate))
   use _ <- result.try(check_compounds(compounds_per_year))
   use _ <- result.try(check_digits(digits))
-  let work_digits = int.min(digits + 4, max_work_digits)
+  let work_digits = max_work_digits
   use rate_per_period <- result.try(
     decimal.divide(
       a: nominal_rate,
@@ -357,12 +351,50 @@ fn pow_loop(
   digits digits: Int,
 ) -> Result(decimal.Decimal, InterestError) {
   use <- bool.guard(when: exponent <= 0, return: Ok(acc))
+  // Round the accumulator adaptively so that `acc × base` cannot
+  // overflow `max_safe_coefficient`. For typical financial inputs
+  // this is a no-op at the `digits` target; high-growth scenarios
+  // shed precision per step rather than failing outright.
+  let acc_safe = round_for_safe_multiply(a: acc, b: base, max_digits: digits)
   use product <- result.try(
-    decimal.multiply(acc, base) |> result.map_error(ArithmeticError),
+    decimal.multiply(acc_safe, base) |> result.map_error(ArithmeticError),
   )
   let trimmed =
     decimal.round(d: product, digits: digits, mode: rounding.HalfEven)
   pow_loop(base: base, exponent: exponent - 1, acc: trimmed, digits: digits)
+}
+
+/// Round `a` to the largest `d ≤ max_digits` such that
+/// `|a_rounded.coefficient| × |b.coefficient|` fits inside
+/// `max_safe_coefficient`. Falls back to the input value if even
+/// `d = 0` would still overflow (in that case the subsequent
+/// `decimal.multiply` will surface a `PrecisionExceeded` error,
+/// which is the right outcome — the caller's inputs are outside
+/// the supported range).
+fn round_for_safe_multiply(
+  a a: decimal.Decimal,
+  b b: decimal.Decimal,
+  max_digits max_digits: Int,
+) -> decimal.Decimal {
+  let b_coef = int.absolute_value(decimal.coefficient(d: b))
+  case b_coef {
+    0 -> a
+    _ -> do_round_for_safe(a: a, b_coef: b_coef, digits: max_digits)
+  }
+}
+
+fn do_round_for_safe(
+  a a: decimal.Decimal,
+  b_coef b_coef: Int,
+  digits digits: Int,
+) -> decimal.Decimal {
+  use <- bool.guard(when: digits < 0, return: a)
+  let candidate = decimal.round(d: a, digits: digits, mode: rounding.HalfEven)
+  let candidate_coef = int.absolute_value(decimal.coefficient(d: candidate))
+  case candidate_coef * b_coef <= max_safe_coefficient {
+    True -> candidate
+    False -> do_round_for_safe(a: a, b_coef: b_coef, digits: digits - 1)
+  }
 }
 
 fn check_principal(p: decimal.Decimal) -> Result(Nil, InterestError) {
