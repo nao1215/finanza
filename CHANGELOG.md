@@ -10,6 +10,7 @@ and this project is expected to follow [Semantic Versioning](https://semver.org/
 ### Added
 
 - `finanza/currency`: `currency.from_major(amount, currency)` builds a `Money` from an integer whole-currency amount, mirroring `from_minor/2` for the human-readable price case. `from_major(35, usd())` represents `$35` and `from_major(3500, jpy())` represents `¥3,500` — the call shape is the same regardless of the currency's `exponent`, so callers no longer have to pre-multiply by `10 ^ exponent` (the silent off-by-100× footgun `from_minor` has on two-exponent currencies when the input is actually a major-unit integer). `from_minor` keeps its role for callers who already hold a minor-units integer (e.g. a value loaded from a `cents` database column). (#16)
+- `finanza/decimal`: typed `Decimal → Int` conversions, closing the gap that previously forced callers to round-trip through `int.parse(decimal.to_string(d))`. `decimal.to_int/1` succeeds only when `d` is exactly integer-valued (no fractional part *and* fits within `±max_safe_coefficient`); both a fractional remainder and a coefficient overflow surface as `PrecisionExceeded`. `decimal.to_int_truncated/1` drops the fractional part toward zero unconditionally (errors only on overflow). `decimal.to_int_rounded(d, mode)` applies any `rounding.Mode` and returns the integer — the natural fit for the "I rounded to N decimals, give me the integer" workflow that arises whenever rounded monetary values are persisted to an integer minor-units column. (#17)
 
 ## [0.4.0] - 2026-05-14
 
