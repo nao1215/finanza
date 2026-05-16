@@ -506,6 +506,68 @@ pub fn rescale_half_even_tie_test() -> Nil {
   |> should.equal("12.4")
 }
 
+// --- to_int / to_int_truncated / to_int_rounded -------------------------
+
+pub fn to_int_integer_valued_test() -> Nil {
+  decimal.to_int(decimal.from_int(7))
+  |> should.equal(Ok(7))
+}
+
+pub fn to_int_trailing_zeros_succeed_test() -> Nil {
+  // "12.00" → coefficient 1200, exponent -2; cleanly divisible.
+  let assert Ok(d) = decimal.from_string("12.00")
+  decimal.to_int(d)
+  |> should.equal(Ok(12))
+}
+
+pub fn to_int_fractional_part_rejected_test() -> Nil {
+  let assert Ok(d) = decimal.from_string("12.34")
+  decimal.to_int(d)
+  |> should.equal(Error(decimal.PrecisionExceeded))
+}
+
+pub fn to_int_negative_value_test() -> Nil {
+  let assert Ok(d) = decimal.from_string("-7")
+  decimal.to_int(d)
+  |> should.equal(Ok(-7))
+}
+
+pub fn to_int_truncated_drops_positive_fraction_test() -> Nil {
+  let assert Ok(d) = decimal.from_string("1.9")
+  decimal.to_int_truncated(d)
+  |> should.equal(Ok(1))
+}
+
+pub fn to_int_truncated_drops_negative_fraction_test() -> Nil {
+  // Round toward zero — `-1.9` becomes `-1`, not `-2`.
+  let assert Ok(d) = decimal.from_string("-1.9")
+  decimal.to_int_truncated(d)
+  |> should.equal(Ok(-1))
+}
+
+pub fn to_int_rounded_half_even_test() -> Nil {
+  let value = decimal.new(coefficient: 25, exponent: -1)
+  decimal.to_int_rounded(d: value, mode: rounding.HalfEven)
+  |> should.equal(Ok(2))
+}
+
+pub fn to_int_rounded_half_up_test() -> Nil {
+  let value = decimal.new(coefficient: 25, exponent: -1)
+  decimal.to_int_rounded(d: value, mode: rounding.HalfUp)
+  |> should.equal(Ok(3))
+}
+
+pub fn to_int_rounded_matches_rescale_pattern_test() -> Nil {
+  // The rounded integer should match the coefficient of a manual
+  // rescale to exponent 0 with the same mode.
+  let assert Ok(d) = decimal.from_string("3.14159")
+  let assert Ok(rescaled) = decimal.rescale(d, 0, rounding.HalfEven)
+  let via_to_int =
+    decimal.to_int_rounded(d: d, mode: rounding.HalfEven)
+    |> should.be_ok
+  via_to_int |> should.equal(decimal.coefficient(rescaled))
+}
+
 // --- Compare / equal -----------------------------------------------------
 
 pub fn equal_across_representations_test() -> Nil {

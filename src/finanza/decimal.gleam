@@ -257,6 +257,68 @@ pub fn exponent(d d: Decimal) -> Int {
   d.exponent
 }
 
+/// Convert to a plain integer.
+///
+/// Succeeds only when `d` is *exactly* integer-valued — no fractional
+/// part *and* the resulting integer fits within
+/// `±max_safe_coefficient`. Both a non-zero fractional remainder and a
+/// coefficient overflow produce `PrecisionExceeded`. Use
+/// [`to_int_truncated`](#to_int_truncated) when the fractional part
+/// should be dropped toward zero, or
+/// [`to_int_rounded`](#to_int_rounded) when it should be rounded using
+/// a specific [`rounding.Mode`](decimal/rounding.html#Mode).
+///
+/// ```gleam
+/// to_int(from_int(7))                 // Ok(7)
+/// let assert Ok(d) = from_string("12.34")
+/// to_int(d)                           // Error(PrecisionExceeded)
+/// let assert Ok(d) = from_string("12.00")
+/// to_int(d)                           // Ok(12)
+/// ```
+pub fn to_int(d d: Decimal) -> Result(Int, ArithmeticError) {
+  case int.compare(d.exponent, 0) {
+    order.Eq -> Ok(d.coefficient)
+    order.Gt -> scale_up(d.coefficient, d.exponent)
+    order.Lt -> {
+      let divisor = pow_10(-d.exponent)
+      let abs_c = int.absolute_value(d.coefficient)
+      let remainder = abs_c - abs_c / divisor * divisor
+      case remainder {
+        0 -> Ok(d.coefficient / divisor)
+        _ -> Error(PrecisionExceeded)
+      }
+    }
+  }
+}
+
+/// Truncate `d` toward zero (`rounding.Down`) and return the integer.
+///
+/// Drops the fractional part regardless of its size, so `-1.9` becomes
+/// `-1` and `1.9` becomes `1`. Use
+/// [`to_int_rounded`](#to_int_rounded) when a different rounding mode
+/// is needed. Returns `PrecisionExceeded` only when the truncated
+/// integer cannot fit within `±max_safe_coefficient` (a fractional
+/// part on its own never causes a failure here, unlike
+/// [`to_int`](#to_int)).
+pub fn to_int_truncated(d d: Decimal) -> Result(Int, ArithmeticError) {
+  to_int_rounded(d: d, mode: rounding.Down)
+}
+
+/// Round `d` to an integer using `mode` and return that integer.
+///
+/// `mode` is applied as if rounding to zero decimal places — so
+/// `to_int_rounded(d, mode: rounding.HalfEven)` is the natural fit
+/// for the "I rounded to N decimals, now give me the integer"
+/// workflow. Returns `PrecisionExceeded` only when the rounded
+/// integer cannot fit within `±max_safe_coefficient`.
+pub fn to_int_rounded(
+  d d: Decimal,
+  mode mode: rounding.Mode,
+) -> Result(Int, ArithmeticError) {
+  use rescaled <- result.map(rescale(d: d, target_exponent: 0, mode: mode))
+  rescaled.coefficient
+}
+
 /// Render a `Decimal` as a plain string. Preserves the encoded
 /// exponent (`new(coefficient: 100, exponent: -2)` renders as `"1.00"`,
 /// not `"1"`).
