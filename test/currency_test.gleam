@@ -99,6 +99,33 @@ pub fn to_minor_test() -> Nil {
   |> should.equal(Ok(1234))
 }
 
+pub fn from_major_usd_test() -> Nil {
+  // $35 — two-exponent currency, but `from_major` does not scale by
+  // the exponent so the human-readable amount lands as-is.
+  let m = currency.from_major(amount: 35, currency: catalog.usd())
+  currency.amount(m)
+  |> decimal.to_string
+  |> should.equal("35")
+}
+
+pub fn from_major_jpy_test() -> Nil {
+  // ¥3,500 — zero-exponent currency. Same shape as `from_minor` for
+  // this case; documenting that callers no longer have to pick
+  // between the two for major-unit ingestion.
+  let m = currency.from_major(amount: 3500, currency: catalog.jpy())
+  currency.amount(m)
+  |> decimal.to_string
+  |> should.equal("3500")
+}
+
+pub fn from_major_round_trips_via_to_minor_test() -> Nil {
+  // $35 → 3500 cents. Confirms `from_major` lines up with the
+  // existing minor-unit machinery for the two-exponent case.
+  let m = currency.from_major(amount: 35, currency: catalog.usd())
+  currency.to_minor(m: m, mode: rounding.HalfEven)
+  |> should.equal(Ok(3500))
+}
+
 pub fn to_minor_with_finer_precision_test() -> Nil {
   // $1.005 → 100 (banker's rounding because 100.5 ties, 100 is even).
   let assert Ok(amount) = decimal.from_string("1.005")
