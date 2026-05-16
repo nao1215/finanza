@@ -669,11 +669,39 @@ fn compare_by_magnitude(a: Decimal, b: Decimal) -> order.Order {
 fn compare_same_sign(a: Decimal, b: Decimal) -> order.Order {
   let na = normalize(a)
   let nb = normalize(b)
-  let mag_a = digit_count(int.absolute_value(na.coefficient)) + na.exponent
-  let mag_b = digit_count(int.absolute_value(nb.coefficient)) + nb.exponent
-  let raw = int.compare(mag_a, mag_b)
+  let abs_a = int.absolute_value(na.coefficient)
+  let abs_b = int.absolute_value(nb.coefficient)
+  let len_a = digit_count(abs_a)
+  let len_b = digit_count(abs_b)
+  let mag_a = len_a + na.exponent
+  let mag_b = len_b + nb.exponent
+  let raw = case int.compare(mag_a, mag_b) {
+    order.Eq ->
+      compare_same_magnitude(a: abs_a, len_a: len_a, b: abs_b, len_b: len_b)
+    other -> other
+  }
   use <- bool.guard(when: na.coefficient < 0, return: reverse_order(raw))
   raw
+}
+
+/// Compare two non-negative integers that share a common magnitude
+/// (`digit_count + exponent` ties at the call site). The two
+/// coefficients may carry different digit counts; the shorter is
+/// right-padded with zeros to match the longer, after which a
+/// lexicographic compare of equal-length non-negative digit strings is
+/// numerically correct. This path avoids `a * 10^k` to remain safe
+/// even when the caller has constructed an out-of-bounds coefficient
+/// via `new/2`.
+fn compare_same_magnitude(
+  a a: Int,
+  len_a len_a: Int,
+  b b: Int,
+  len_b len_b: Int,
+) -> order.Order {
+  let max_len = int.max(len_a, len_b)
+  let str_a = int.to_string(a) <> string.repeat("0", max_len - len_a)
+  let str_b = int.to_string(b) <> string.repeat("0", max_len - len_b)
+  string.compare(str_a, str_b)
 }
 
 fn reverse_order(o: order.Order) -> order.Order {
