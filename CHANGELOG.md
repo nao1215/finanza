@@ -7,6 +7,10 @@ and this project is expected to follow [Semantic Versioning](https://semver.org/
 
 ## [Unreleased]
 
+### Added
+
+- `finanza/currency`: `currency.from_major(amount, currency)` builds a `Money` from an integer whole-currency amount, mirroring `from_minor/2` for the human-readable price case. `from_major(35, usd())` represents `$35` and `from_major(3500, jpy())` represents `¥3,500` — the call shape is the same regardless of the currency's `exponent`, so callers no longer have to pre-multiply by `10 ^ exponent` (the silent off-by-100× footgun `from_minor` has on two-exponent currencies when the input is actually a major-unit integer). `from_minor` keeps its role for callers who already hold a minor-units integer (e.g. a value loaded from a `cents` database column). (#16)
+
 ## [0.4.0] - 2026-05-14
 
 ### Changed

@@ -143,6 +143,24 @@ pub fn from_minor(units units: Int, currency currency: Currency) -> Money {
   )
 }
 
+/// Build a `Money` from an integer number of *major* units — the
+/// whole-currency amount a human would read off a price tag.
+///
+/// `from_major(amount: 35, currency: catalog.usd())` represents `$35`,
+/// and `from_major(amount: 3500, currency: catalog.jpy())` represents
+/// `¥3,500`. Both calls produce the same kind of value regardless of
+/// the currency's `exponent`, so callers do not have to pre-multiply
+/// by `10 ^ exponent` to compensate (the silent off-by-100× footgun
+/// `from_minor` has on two-exponent currencies like USD or EUR when
+/// the input is actually a major-unit integer).
+///
+/// Use `from_minor` instead when you already hold a minor-unit
+/// integer — for example, a value loaded from a `cents` column in a
+/// database.
+pub fn from_major(amount amount: Int, currency currency: Currency) -> Money {
+  Money(amount: decimal.from_int(n: amount), currency: currency)
+}
+
 /// Convert a `Money` back to its minor-unit integer count, rounding
 /// to the currency's exponent using `mode`.
 pub fn to_minor(
