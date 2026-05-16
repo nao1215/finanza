@@ -8,18 +8,29 @@
 //// `Eq`. The fix in `compare_same_sign` adds a digit-string
 //// tie-breaker, so this suite pins both the failing-before-fix case
 //// and the previously-correct neighbouring cases.
+////
+//// The bug requires coefficients beyond `max_safe_coefficient` and is
+//// only reachable from `decimal.new/2`. The reproduction literals
+//// exceed JavaScript's `Number.MAX_SAFE_INTEGER`, which the Gleam
+//// compiler flags as a warning-as-error on the JS lane. Since the bug
+//// itself is not user-reachable on JavaScript (the same literal
+//// truncation prevents construction), this suite is gated to the
+//// Erlang target.
 
+@target(erlang)
 import finanza/decimal
+
+@target(erlang)
 import gleam/order
+
+@target(erlang)
 import gleeunit/should
 
 pub fn main() -> Nil {
   Nil
 }
 
-// Bug case: a = 5e50, b ≈ 1.23e50. a > b. Pre-fix compare returned
-// Eq because both have normalised magnitude 51 and the align overflow
-// triggered the magnitude fallback.
+@target(erlang)
 pub fn compare_unequal_magnitude_tie_returns_gt_test() -> Nil {
   let a = decimal.new(coefficient: 5, exponent: 50)
   let b = decimal.new(coefficient: 123_456_789_012_345_678_901, exponent: 30)
@@ -27,7 +38,7 @@ pub fn compare_unequal_magnitude_tie_returns_gt_test() -> Nil {
   |> should.equal(order.Gt)
 }
 
-// Same shape, reversed orientation.
+@target(erlang)
 pub fn compare_unequal_magnitude_tie_returns_lt_test() -> Nil {
   let a = decimal.new(coefficient: 1, exponent: 50)
   let b = decimal.new(coefficient: 999_999_999_999_999_999_999, exponent: 30)
@@ -35,7 +46,7 @@ pub fn compare_unequal_magnitude_tie_returns_lt_test() -> Nil {
   |> should.equal(order.Lt)
 }
 
-// Negative-side mirror of the bug.
+@target(erlang)
 pub fn compare_unequal_magnitude_tie_negative_test() -> Nil {
   let a = decimal.new(coefficient: -5, exponent: 50)
   let b = decimal.new(coefficient: -123_456_789_012_345_678_901, exponent: 30)
@@ -44,7 +55,7 @@ pub fn compare_unequal_magnitude_tie_negative_test() -> Nil {
   |> should.equal(order.Lt)
 }
 
-// Control: truly equal via normalisation. Must still be Eq.
+@target(erlang)
 pub fn compare_truly_equal_after_normalize_test() -> Nil {
   let a = decimal.new(coefficient: 1, exponent: 50)
   let b = decimal.new(coefficient: 100_000_000_000_000_000_000, exponent: 30)
@@ -52,8 +63,7 @@ pub fn compare_truly_equal_after_normalize_test() -> Nil {
   |> should.equal(order.Eq)
 }
 
-// Invariant: compare(a, b) == Eq IFF equal(a, b) == True, on the
-// inputs that previously broke the relation.
+@target(erlang)
 pub fn compare_and_equal_consistent_on_unsafe_inputs_test() -> Nil {
   let a = decimal.new(coefficient: 5, exponent: 50)
   let b = decimal.new(coefficient: 123_456_789_012_345_678_901, exponent: 30)
