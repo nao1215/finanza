@@ -195,8 +195,20 @@ pub fn present_value(
     )
     |> result.map_error(ArithmeticError),
   )
+  // Issue #26: when `future` carries the precision returned by a
+  // previous `future_value` call at the user's requested `digits`
+  // (e.g. 6 places → coefficient ~1.6e9), multiplying it against
+  // the high-precision `inv_growth` coefficient overflows
+  // `max_safe_coefficient`. Round `future` adaptively to the
+  // largest digit count for which the product still fits, so the
+  // FV/PV inverse property holds for callers that thread the
+  // result of `future_value` through `present_value` at the same
+  // `digits`.
+  let future_safe =
+    round_for_safe_multiply(a: future, b: inv_growth, max_digits: work_digits)
   use product <- result.try(
-    decimal.multiply(future, inv_growth) |> result.map_error(ArithmeticError),
+    decimal.multiply(future_safe, inv_growth)
+    |> result.map_error(ArithmeticError),
   )
   rescale_to_digits(product, digits)
 }
