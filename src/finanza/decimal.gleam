@@ -66,6 +66,20 @@ pub type ArithmeticError {
   PrecisionExceeded
 }
 
+/// Errors returned by validated constructors
+/// ([`try_new`](#try_new), [`try_from_int`](#try_from_int)).
+pub type ConstructError {
+  /// The supplied coefficient — or the value implied once the
+  /// exponent is applied (`|coefficient| × 10^exponent` for
+  /// `exponent ≥ 0`) — would exceed `±9_007_199_254_740_991`
+  /// (the JavaScript-safe integer ceiling). Such a value cannot
+  /// round-trip through [`to_string`](#to_string) and
+  /// [`from_string`](#from_string), so construction fails fast
+  /// rather than producing a `Decimal` the library cannot read
+  /// back.
+  CoefficientTooLarge
+}
+
 /// 2^53 − 1. The largest absolute coefficient that remains exact on
 /// JavaScript's `Number` representation. The Erlang target tolerates
 /// larger values, but this bound is enforced everywhere so behaviour
@@ -85,15 +99,84 @@ pub fn one() -> Decimal {
 }
 
 /// Build a `Decimal` from an integer.
+///
+/// Panics if `|n| > 9_007_199_254_740_991` (such a coefficient
+/// cannot round-trip through [`to_string`](#to_string) and
+/// [`from_string`](#from_string)). Use [`try_from_int`](#try_from_int)
+/// when the input is supplied by a caller and might exceed the
+/// safe range — that variant returns a `Result` instead of
+/// panicking.
 pub fn from_int(n n: Int) -> Decimal {
-  Decimal(n, 0)
+  let assert Ok(d) = try_from_int(n: n)
+  d
+}
+
+/// Build a `Decimal` from an integer, returning a `Result`.
+///
+/// Returns `Error(CoefficientTooLarge)` when
+/// `|n| > 9_007_199_254_740_991`, which is the threshold above
+/// which the resulting `Decimal` cannot round-trip through
+/// [`to_string`](#to_string) and [`from_string`](#from_string).
+pub fn try_from_int(n n: Int) -> Result(Decimal, ConstructError) {
+  use <- bool.guard(
+    when: int.absolute_value(n) > max_safe_coefficient,
+    return: Error(CoefficientTooLarge),
+  )
+  Ok(Decimal(n, 0))
 }
 
 /// Build a `Decimal` directly from a coefficient and exponent.
 ///
 /// `new(coefficient: 1234, exponent: -2)` represents `12.34`.
+///
+/// Panics if the implied rendered value exceeds the safe range
+/// (`|coefficient| > 9_007_199_254_740_991`, or — for non-negative
+/// `exponent` — `|coefficient| × 10^exponent > 9_007_199_254_740_991`).
+/// Use [`try_new`](#try_new) when the inputs are supplied by a
+/// caller and might exceed the safe range — that variant returns
+/// a `Result` instead of panicking.
 pub fn new(coefficient coefficient: Int, exponent exponent: Int) -> Decimal {
-  Decimal(coefficient, exponent)
+  let assert Ok(d) = try_new(coefficient: coefficient, exponent: exponent)
+  d
+}
+
+/// Build a `Decimal` from a coefficient and exponent, returning a
+/// `Result`.
+///
+/// Returns `Error(CoefficientTooLarge)` when the rendered value
+/// would overflow the safe range — either because
+/// `|coefficient| > 9_007_199_254_740_991`, or because a positive
+/// `exponent` would push the rendered integer
+/// (`|coefficient| × 10^exponent`) past that bound. Such a value
+/// cannot round-trip through [`to_string`](#to_string) and
+/// [`from_string`](#from_string).
+pub fn try_new(
+  coefficient coefficient: Int,
+  exponent exponent: Int,
+) -> Result(Decimal, ConstructError) {
+  let abs = int.absolute_value(coefficient)
+  use <- bool.guard(
+    when: abs > max_safe_coefficient,
+    return: Error(CoefficientTooLarge),
+  )
+  case exponent > 0 {
+    True ->
+      case rendered_fits(abs: abs, zeros_remaining: exponent) {
+        True -> Ok(Decimal(coefficient, exponent))
+        False -> Error(CoefficientTooLarge)
+      }
+    False -> Ok(Decimal(coefficient, exponent))
+  }
+}
+
+fn rendered_fits(abs abs: Int, zeros_remaining zeros_remaining: Int) -> Bool {
+  case zeros_remaining {
+    0 -> abs <= max_safe_coefficient
+    _ -> {
+      use <- bool.guard(when: abs > max_safe_coefficient, return: False)
+      rendered_fits(abs: abs * 10, zeros_remaining: zeros_remaining - 1)
+    }
+  }
 }
 
 /// Parse a decimal from a string. Accepts an optional leading `+` or
