@@ -11,6 +11,10 @@ and this project is expected to follow [Semantic Versioning](https://semver.org/
 
 - `finanza/decimal`: `decimal.try_new/2` and `decimal.try_from_int/1`, validated counterparts of `decimal.new/2` and `decimal.from_int/1` that return `Result(Decimal, ConstructError)` (variant `CoefficientTooLarge`) instead of panicking when the rendered value would exceed `±9_007_199_254_740_991`. Use these whenever the coefficient or exponent is supplied by a caller and might exceed the safe range — they surface the overflow as a value rather than crashing the process. (#23)
 
+### Documentation
+
+- `finanza/interest`: module-level "Precision" docstring now explicitly calls out the **honest-precision ceiling** — although the iterative helpers (`compound_interest`, `future_value`, `present_value`, `payment`, `effective_annual_rate`) return a `Decimal` whose exponent matches the caller's requested `-digits` (after #25's `decimal.rescale` fix), the trailing decimal places past 7 (the `max_work_digits` cap inside `growth_factor`) are zero padding from the rescale, not computed precision. The numeric value matches what the loop produces at 7 honest digits — asking for more produces a more verbose rendered form without making the result more accurate. The note points readers at higher-precision packages (e.g. Python `decimal` with `prec=50`) for caller flows that need more than 7 honest digits. (#28)
+
 ### Fixed
 
 - `finanza/card`: `card.normalize` now strips every ASCII whitespace character (` `, `\t`, `\n`, `\r`, VT `\u{000B}`, FF `\u{000C}`) in addition to the existing hyphen-style separators (`-`, `_`, `.`). Previously the docstring promised "ASCII whitespace" but the implementation filtered only SPACE, so PANs copy-pasted from PDFs / emails that introduce tab- or CR/LF-separated digit groups passed through with the whitespace intact and then failed downstream Luhn / length validation. The docstring now also lists the exact stripped set, and explicitly notes that Unicode whitespace (NBSP, ideographic space) is out of scope so callers know to pre-normalise. (#24)

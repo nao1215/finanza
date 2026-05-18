@@ -20,6 +20,20 @@
 //// ~10⁵) does the per-step precision shed digits to keep the
 //// multiplication safe.
 ////
+//// **Honest-precision ceiling.** The iterative loop can deliver at
+//// most ~7 honest decimal digits regardless of the caller's
+//// `digits` argument. After issue #25 (`decimal.round` is
+//// trim-only; the final step is now `decimal.rescale`), the
+//// returned value's exponent matches the requested `-digits`, so
+//// callers asking for `digits > 7` get a Decimal with the right
+//// shape — but the trailing `digits − 7` decimal places are zero
+//// padding from the final rescale, not computed precision. The
+//// numeric value is unchanged by those trailing zeros; the
+//// rendered form is more verbose without being more accurate. If
+//// you need more than 7 honest digits, compute the closed form in
+//// a higher-precision package (Python `decimal` with `prec=50`,
+//// for instance).
+////
 //// Concrete consequence: results match textbook 50-digit references
 //// (Python `decimal`, `numpy_financial`, Excel) to the cent at
 //// `digits = 2` and to ~10⁻⁶ at `digits = 6` for monthly rates and
