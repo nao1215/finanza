@@ -84,11 +84,11 @@ pub fn simple_interest(
   use pr <- result.try(
     decimal.multiply(principal, rate) |> result.map_error(ArithmeticError),
   )
-  use product <- result.map(
+  use product <- result.try(
     decimal.multiply(pr, decimal.from_int(n: periods))
     |> result.map_error(ArithmeticError),
   )
-  decimal.round(d: product, digits: digits, mode: rounding.HalfEven)
+  rescale_to_digits(product, digits)
 }
 
 // --- Compound interest ---------------------------------------------------
@@ -127,10 +127,10 @@ pub fn compound_interest(
     periods: total_periods,
     digits: work_digits,
   ))
-  use product <- result.map(
+  use product <- result.try(
     decimal.multiply(principal, growth) |> result.map_error(ArithmeticError),
   )
-  decimal.round(d: product, digits: digits, mode: rounding.HalfEven)
+  rescale_to_digits(product, digits)
 }
 
 // --- FV / PV / PMT / EAR -------------------------------------------------
@@ -154,10 +154,10 @@ pub fn future_value(
     periods: periods,
     digits: work_digits,
   ))
-  use product <- result.map(
+  use product <- result.try(
     decimal.multiply(present, growth) |> result.map_error(ArithmeticError),
   )
-  decimal.round(d: product, digits: digits, mode: rounding.HalfEven)
+  rescale_to_digits(product, digits)
 }
 
 /// Present value of `future` discounted at `rate_per_period` for
@@ -195,10 +195,10 @@ pub fn present_value(
     )
     |> result.map_error(ArithmeticError),
   )
-  use product <- result.map(
+  use product <- result.try(
     decimal.multiply(future, inv_growth) |> result.map_error(ArithmeticError),
   )
-  decimal.round(d: product, digits: digits, mode: rounding.HalfEven)
+  rescale_to_digits(product, digits)
 }
 
 /// Periodic payment for a fully-amortising loan:
@@ -321,11 +321,11 @@ pub fn effective_annual_rate(
     periods: compounds_per_year,
     digits: work_digits,
   ))
-  use ear_raw <- result.map(
+  use ear_raw <- result.try(
     decimal.subtract(growth, decimal.one())
     |> result.map_error(ArithmeticError),
   )
-  decimal.round(d: ear_raw, digits: digits, mode: rounding.HalfEven)
+  rescale_to_digits(ear_raw, digits)
 }
 
 // --- Internals -----------------------------------------------------------
@@ -426,4 +426,17 @@ fn check_compounds(n: Int) -> Result(Nil, InterestError) {
 fn check_digits(d: Int) -> Result(Nil, InterestError) {
   use <- bool.guard(when: d < 0, return: Error(NegativeDigits))
   Ok(Nil)
+}
+
+/// Force `d` to exponent `-digits`, padding with zero or rounding
+/// half-even as needed, so the rendered form always carries exactly
+/// `digits` decimal places (issue #25 — `decimal.round` is trim-only
+/// and cannot pad, so calling it as the final step lets results like
+/// `2000` slip through when the caller asked for `digits: 2`).
+fn rescale_to_digits(
+  d: decimal.Decimal,
+  digits: Int,
+) -> Result(decimal.Decimal, InterestError) {
+  decimal.rescale(d: d, target_exponent: -digits, mode: rounding.HalfEven)
+  |> result.map_error(ArithmeticError)
 }

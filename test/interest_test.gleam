@@ -16,6 +16,30 @@ pub fn simple_interest_basic_test() -> Nil {
   |> should.equal("15.00")
 }
 
+// Issue #25: simple_interest at zero rate (or any whole-number
+// product) used to render without the requested decimal places
+// because `decimal.round` is trim-only and never pads. Asserting
+// against the rendered form pins the precision contract.
+pub fn simple_interest_zero_rate_renders_with_digits_test() -> Nil {
+  let p = decimal.from_int(1000)
+  let r = decimal.zero()
+  let assert Ok(result) =
+    interest.simple_interest(principal: p, rate: r, periods: 5, digits: 4)
+  decimal.to_string(result)
+  |> should.equal("0.0000")
+}
+
+pub fn simple_interest_whole_number_result_renders_with_digits_test() -> Nil {
+  // 200 × 0.5 × 4 = 400 (exact). Without the fix the result rendered
+  // as "400" at digits=2; with rescale it now renders as "400.00".
+  let p = decimal.from_int(200)
+  let assert Ok(r) = decimal.from_string("0.5")
+  let assert Ok(result) =
+    interest.simple_interest(principal: p, rate: r, periods: 4, digits: 2)
+  decimal.to_string(result)
+  |> should.equal("400.00")
+}
+
 pub fn simple_interest_rejects_negative_principal_test() -> Nil {
   let assert Ok(p) = decimal.from_string("-100")
   let assert Ok(r) = decimal.from_string("0.05")
