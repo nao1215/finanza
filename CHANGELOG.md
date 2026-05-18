@@ -7,9 +7,14 @@ and this project is expected to follow [Semantic Versioning](https://semver.org/
 
 ## [Unreleased]
 
+### Added
+
+- `finanza/decimal`: `decimal.try_new/2` and `decimal.try_from_int/1`, validated counterparts of `decimal.new/2` and `decimal.from_int/1` that return `Result(Decimal, ConstructError)` (variant `CoefficientTooLarge`) instead of panicking when the rendered value would exceed `±9_007_199_254_740_991`. Use these whenever the coefficient or exponent is supplied by a caller and might exceed the safe range — they surface the overflow as a value rather than crashing the process. (#23)
+
 ### Fixed
 
 - `finanza/card`: `card.normalize` now strips every ASCII whitespace character (` `, `\t`, `\n`, `\r`, VT `\u{000B}`, FF `\u{000C}`) in addition to the existing hyphen-style separators (`-`, `_`, `.`). Previously the docstring promised "ASCII whitespace" but the implementation filtered only SPACE, so PANs copy-pasted from PDFs / emails that introduce tab- or CR/LF-separated digit groups passed through with the whitespace intact and then failed downstream Luhn / length validation. The docstring now also lists the exact stripped set, and explicitly notes that Unicode whitespace (NBSP, ideographic space) is out of scope so callers know to pre-normalise. (#24)
+- `finanza/decimal`: `decimal.new/2` and `decimal.from_int/1` now reject coefficients whose rendered form would exceed the safe range (`|coefficient| × 10^exponent > 9_007_199_254_740_991` for non-negative exponents, or `|coefficient| > 9_007_199_254_740_991` for any exponent) — previously these constructors accepted any input silently, so `decimal.to_string(decimal.new(1, 20))` produced `"100000000000000000000"` which `decimal.from_string` then refused to parse with `ParsedValueTooLarge`, breaking the round-trip property `from_string(to_string(d)) == Ok(d)`. The check matches the long-standing `from_string` guard, so the construction side and the parse side now agree on what values are valid. Callers that previously relied on silent overflow can switch to `try_new/2` / `try_from_int/1` to surface the rejection as a `Result`. (#23)
 
 ## [0.5.0] - 2026-05-16
 

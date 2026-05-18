@@ -92,7 +92,15 @@ unwrap_used = "error"
   "thrown_away_error",
   "unused_exports",
 ]
-# Decimal/Interest numeric code uses conventional short math names (a, b, n, r, p)
-"src/finanza/decimal.gleam" = ["short_variable_name"]
+# Decimal/Interest numeric code uses conventional short math names (a, b, n, r, p).
+# decimal.gleam also exposes panicking convenience constructors (`new`,
+# `from_int`) that delegate to the validated `try_*` variants — the
+# panic is the documented behaviour for callers willing to assert
+# in-range inputs.
+"src/finanza/decimal.gleam" = [
+  "short_variable_name",
+  "assert_ok_pattern",
+  "avoid_panic",
+]
 "src/finanza/interest.gleam" = ["short_variable_name"]
 "src/finanza/interest/amortization.gleam" = ["short_variable_name"]

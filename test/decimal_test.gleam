@@ -1,3 +1,4 @@
+import gleam/list
 import gleam/order
 import gleeunit/should
 
@@ -30,6 +31,70 @@ pub fn new_explicit_test() -> Nil {
   |> should.equal(12_345)
   decimal.exponent(value)
   |> should.equal(-2)
+}
+
+// Issue #23: try_new rejects coefficients whose rendered form would
+// exceed max_safe_coefficient. Without this guard, to_string(new(c, e))
+// could produce a digit string that from_string refuses to parse,
+// breaking the round-trip property.
+//
+// The "coefficient exactly one above the safe ceiling" probe is only
+// meaningful on Erlang: on JavaScript the literal is itself outside
+// the IEEE 754 safe-integer range, and the Gleam compiler refuses it
+// at warnings-as-errors. The rendered-overflow probes (next test)
+// cover both targets because they multiply small literals at runtime.
+@target(erlang)
+pub fn try_new_rejects_overlarge_coefficient_test() -> Nil {
+  decimal.try_from_int(n: 9_007_199_254_740_992)
+  |> should.equal(Error(decimal.CoefficientTooLarge))
+  decimal.try_new(coefficient: 9_007_199_254_740_992, exponent: 0)
+  |> should.equal(Error(decimal.CoefficientTooLarge))
+  decimal.try_new(coefficient: -9_007_199_254_740_992, exponent: 0)
+  |> should.equal(Error(decimal.CoefficientTooLarge))
+}
+
+pub fn try_new_rejects_overlarge_rendered_value_test() -> Nil {
+  // |c| * 10^e exceeds max_safe_coefficient (9_007_199_254_740_991 ≈ 9e15)
+  decimal.try_new(coefficient: 1, exponent: 20)
+  |> should.equal(Error(decimal.CoefficientTooLarge))
+  decimal.try_new(coefficient: 5, exponent: 16)
+  |> should.equal(Error(decimal.CoefficientTooLarge))
+  decimal.try_new(coefficient: 1, exponent: 16)
+  |> should.equal(Error(decimal.CoefficientTooLarge))
+}
+
+pub fn try_new_accepts_boundary_values_test() -> Nil {
+  let assert Ok(_) =
+    decimal.try_new(coefficient: 9_007_199_254_740_991, exponent: 0)
+  let assert Ok(_) =
+    decimal.try_new(coefficient: -9_007_199_254_740_991, exponent: 0)
+  // 1 * 10^15 = 1_000_000_000_000_000 ≤ max
+  let assert Ok(_) = decimal.try_new(coefficient: 1, exponent: 15)
+  // 9 * 10^15 = 9_000_000_000_000_000 ≤ max
+  let assert Ok(_) = decimal.try_new(coefficient: 9, exponent: 15)
+  // Negative exponents are unaffected — only |coefficient| is bounded.
+  let assert Ok(_) =
+    decimal.try_new(coefficient: 9_007_199_254_740_991, exponent: -100)
+  Nil
+}
+
+pub fn round_trip_holds_for_every_try_new_test() -> Nil {
+  // For any Decimal built through try_new, from_string(to_string(d))
+  // returns the same Decimal.
+  let cases = [
+    decimal.try_new(coefficient: 1, exponent: 15),
+    decimal.try_new(coefficient: 9_007_199_254_740_991, exponent: 0),
+    decimal.try_new(coefficient: -9_007_199_254_740_991, exponent: -3),
+    decimal.try_new(coefficient: 12_345, exponent: -2),
+    decimal.try_from_int(n: 0),
+    decimal.try_from_int(n: 9_007_199_254_740_991),
+  ]
+  list.each(cases, fn(result) {
+    let assert Ok(d) = result
+    let assert Ok(parsed) = decimal.from_string(decimal.to_string(d))
+    decimal.equal(d, parsed)
+    |> should.be_true
+  })
 }
 
 // --- Parser --------------------------------------------------------------
@@ -243,32 +308,6 @@ pub fn add_mixed_precision_test() -> Nil {
   let assert Ok(sum) = decimal.add(a, b)
   decimal.to_string(sum)
   |> should.equal("1.505")
-}
-
-// Regression for #7: add(d, zero()) is the identity for every d,
-// including operands whose exponent would force align to scale the
-// coefficient past max_safe_coefficient (e.g. new(1, 20) would need
-// 1 × 10^20 after alignment, which is well over 2^53 - 1). The zero
-// short-circuit returns the other operand directly.
-pub fn add_large_positive_exponent_plus_zero_returns_operand_test() -> Nil {
-  let big = decimal.new(coefficient: 1, exponent: 20)
-  let assert Ok(sum) = decimal.add(big, decimal.zero())
-  decimal.equal(sum, big)
-  |> should.be_true
-}
-
-pub fn add_zero_plus_large_positive_exponent_returns_operand_test() -> Nil {
-  let big = decimal.new(coefficient: 1, exponent: 20)
-  let assert Ok(sum) = decimal.add(decimal.zero(), big)
-  decimal.equal(sum, big)
-  |> should.be_true
-}
-
-pub fn subtract_large_positive_exponent_minus_zero_returns_operand_test() -> Nil {
-  let big = decimal.new(coefficient: 1, exponent: 20)
-  let assert Ok(diff) = decimal.subtract(big, decimal.zero())
-  decimal.equal(diff, big)
-  |> should.be_true
 }
 
 pub fn add_large_negative_exponent_plus_zero_returns_operand_test() -> Nil {
