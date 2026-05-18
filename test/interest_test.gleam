@@ -234,6 +234,28 @@ pub fn schedule_principal_sum_test() -> Nil {
   |> should.be_true
 }
 
+// Issue #27: amortization.schedule used to fail with
+// `PrecisionExceeded` at `digits = 8` because the internal
+// `amortising_payment` divide scaled the numerator by
+// `digits + (numerator.exp - denominator.exp)` digits, which
+// overflowed `max_safe_coefficient` once `digits` crossed 7.
+// The fix caps the internal divide at `work_digits` and rescales
+// to the requested `digits` afterwards.
+pub fn schedule_high_digits_does_not_overflow_test() -> Nil {
+  let principal = decimal.from_int(1000)
+  let assert Ok(rate) = decimal.from_string("0.05")
+  let assert Ok(rows) =
+    amortization.schedule(
+      principal: principal,
+      rate_per_period: rate,
+      periods: 10,
+      digits: 8,
+    )
+  rows
+  |> list_length
+  |> should.equal(10)
+}
+
 pub fn schedule_first_period_test() -> Nil {
   // First period interest = balance × rate = 1000 × 0.01 = 10.00
   let assert Ok(p) = decimal.from_string("1000")

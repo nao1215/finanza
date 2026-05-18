@@ -292,13 +292,34 @@ fn amortising_payment(
   use numerator <- result.try(
     decimal.multiply(principal, rate) |> result.map_error(ArithmeticError),
   )
-  decimal.divide(
-    a: numerator,
-    b: denominator,
-    digits: digits,
-    mode: rounding.HalfEven,
+  // Issue #27: `decimal.divide` scales the numerator up by
+  // `digits + (numerator.exp - denominator.exp)` before integer
+  // division. With `numerator` at exp -2 and `denominator` at exp
+  // `-work_digits` (-7), every extra user-requested digit beyond
+  // ~7 pushes the scaled numerator past `max_safe_coefficient`
+  // (the boundary is `digits = 8` for the canonical 1000/5%/10
+  // amortising loan from the issue). Cap the divide at
+  // `work_digits` and rescale up to the user's `digits` afterward
+  // — the precision contract (module-level "Precision" section)
+  // already documents the 7-working-digit ceiling, so the rescale
+  // is just zero-padding past that point. Capping is preferable
+  // to losing precision via the safe-multiply guard because the
+  // amortising payment is a one-shot computation, not an
+  // iterative one.
+  let internal_digits = case digits > max_work_digits {
+    True -> max_work_digits
+    False -> digits
+  }
+  use raw <- result.try(
+    decimal.divide(
+      a: numerator,
+      b: denominator,
+      digits: internal_digits,
+      mode: rounding.HalfEven,
+    )
+    |> result.map_error(ArithmeticError),
   )
-  |> result.map_error(ArithmeticError)
+  rescale_to_digits(raw, digits)
 }
 
 /// Effective annual rate from a nominal rate compounded
