@@ -1,6 +1,7 @@
 import gleeunit/should
 
 import finanza/decimal
+import finanza/decimal/rounding
 import finanza/interest
 import finanza/interest/amortization
 
@@ -38,6 +39,35 @@ pub fn simple_interest_whole_number_result_renders_with_digits_test() -> Nil {
     interest.simple_interest(principal: p, rate: r, periods: 4, digits: 2)
   decimal.to_string(result)
   |> should.equal("400.00")
+}
+
+// Issue #26: present_value used to overflow with
+// `Error(ArithmeticError(PrecisionExceeded))` when `future`
+// already carried high-precision Decimal exponents — e.g. the
+// output of `future_value(P, r, n, digits: 6)`. The fix rounds
+// `future` adaptively before multiplying by the inverse growth
+// factor so the FV/PV inverse property holds.
+pub fn present_value_round_trips_high_precision_future_test() -> Nil {
+  let p = decimal.from_int(1000)
+  let assert Ok(r) = decimal.from_string("0.05")
+  let assert Ok(fv) =
+    interest.future_value(
+      present: p,
+      rate_per_period: r,
+      periods: 10,
+      digits: 6,
+    )
+  let assert Ok(pv) =
+    interest.present_value(
+      future: fv,
+      rate_per_period: r,
+      periods: 10,
+      digits: 6,
+    )
+  // PV should match P to the cent.
+  let assert Ok(expected) = decimal.from_string("1000.00")
+  decimal.equal(decimal.round(pv, 2, rounding.HalfEven), expected)
+  |> should.be_true
 }
 
 pub fn simple_interest_rejects_negative_principal_test() -> Nil {
