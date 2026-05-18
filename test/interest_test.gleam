@@ -234,6 +234,34 @@ pub fn schedule_principal_sum_test() -> Nil {
   |> should.be_true
 }
 
+// Issue #28: compound_interest at digits > max_work_digits (7) now
+// returns a Decimal whose exponent matches the requested -digits
+// (after issue #25 changed the final step from `round` to
+// `rescale`), but the trailing `digits - 7` decimal places are
+// zero padding from the rescale, not computed precision. The
+// numeric value matches what the iterative loop produces at 7
+// honest digits. This is the documented behaviour — see the
+// module-level "Precision" docstring's honest-precision ceiling
+// note.
+pub fn compound_interest_high_digits_exposes_padding_test() -> Nil {
+  let assert Ok(r) =
+    interest.compound_interest(
+      principal: decimal.from_int(1000),
+      annual_rate: decimal.new(coefficient: 5, exponent: -2),
+      years: 10,
+      compounds_per_year: 12,
+      digits: 8,
+    )
+  // Exponent matches the requested digits (-8 after #25's rescale fix).
+  decimal.exponent(r)
+  |> should.equal(-8)
+  // The 8th decimal place is zero padding (only 7 honest digits
+  // computed), so trimming to 7 produces the same numeric value.
+  let trimmed = decimal.round(r, 7, rounding.HalfEven)
+  decimal.equal(r, trimmed)
+  |> should.be_true
+}
+
 // Issue #27: amortization.schedule used to fail with
 // `PrecisionExceeded` at `digits = 8` because the internal
 // `amortising_payment` divide scaled the numerator by
