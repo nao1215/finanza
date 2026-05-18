@@ -7,6 +7,8 @@ and this project is expected to follow [Semantic Versioning](https://semver.org/
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-05-18
+
 ### Added
 
 - `finanza/decimal`: `decimal.try_new/2` and `decimal.try_from_int/1`, validated counterparts of `decimal.new/2` and `decimal.from_int/1` that return `Result(Decimal, ConstructError)` (variant `CoefficientTooLarge`) instead of panicking when the rendered value would exceed `±9_007_199_254_740_991`. Use these whenever the coefficient or exponent is supplied by a caller and might exceed the safe range — they surface the overflow as a value rather than crashing the process. (#23)
