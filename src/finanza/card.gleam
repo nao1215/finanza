@@ -55,8 +55,10 @@ pub opaque type MaskOptions {
 
 // --- Normalisation ------------------------------------------------------
 
-/// Strip ASCII whitespace and hyphen-style separators (`-`, ` `).
-/// Does not validate that the result is digits-only.
+/// Strip ASCII whitespace (` `, `\t`, `\n`, `\r`, VT, FF) and
+/// hyphen-style separators (`-`, `_`, `.`). Does not validate that
+/// the result is digits-only. Unicode whitespace (NBSP, ideographic
+/// space) is not stripped — pre-normalise if needed.
 pub fn normalize(pan pan: String) -> String {
   pan
   |> string.to_graphemes
@@ -66,7 +68,8 @@ pub fn normalize(pan pan: String) -> String {
 
 fn is_pan_char(grapheme: String) -> Bool {
   case grapheme {
-    " " | "-" | "_" | "." -> False
+    " " | "\t" | "\n" | "\r" | "\u{000B}" | "\u{000C}" -> False
+    "-" | "_" | "." -> False
     _ -> True
   }
 }

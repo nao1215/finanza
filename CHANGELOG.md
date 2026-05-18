@@ -7,6 +7,10 @@ and this project is expected to follow [Semantic Versioning](https://semver.org/
 
 ## [Unreleased]
 
+### Fixed
+
+- `finanza/card`: `card.normalize` now strips every ASCII whitespace character (` `, `\t`, `\n`, `\r`, VT `\u{000B}`, FF `\u{000C}`) in addition to the existing hyphen-style separators (`-`, `_`, `.`). Previously the docstring promised "ASCII whitespace" but the implementation filtered only SPACE, so PANs copy-pasted from PDFs / emails that introduce tab- or CR/LF-separated digit groups passed through with the whitespace intact and then failed downstream Luhn / length validation. The docstring now also lists the exact stripped set, and explicitly notes that Unicode whitespace (NBSP, ideographic space) is out of scope so callers know to pre-normalise. (#24)
+
 ## [0.5.0] - 2026-05-16
 
 ### Added

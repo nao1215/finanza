@@ -11,6 +11,19 @@ pub fn normalize_strips_spaces_and_hyphens_test() -> Nil {
   |> should.equal("4111111111111111")
 }
 
+pub fn normalize_strips_all_ascii_whitespace_test() -> Nil {
+  card.normalize(pan: "4242\t4242\t4242\t4242")
+  |> should.equal("4242424242424242")
+  card.normalize(pan: "4242\n4242\n4242\n4242")
+  |> should.equal("4242424242424242")
+  card.normalize(pan: "4242\r4242\r4242\r4242")
+  |> should.equal("4242424242424242")
+  card.normalize(pan: "4242\u{000B}4242\u{000C}4242\t4242")
+  |> should.equal("4242424242424242")
+  card.normalize(pan: "4242\t4242\r4242\n4242")
+  |> should.equal("4242424242424242")
+}
+
 // --- Luhn ---------------------------------------------------------------
 
 pub fn luhn_wikipedia_example_test() -> Nil {
