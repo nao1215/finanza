@@ -33,6 +33,38 @@ pub fn new_explicit_test() -> Nil {
   |> should.equal(-2)
 }
 
+// Issue #25: round is documented as trim-only and does not pad
+// trailing zeros when the input is already at coarser precision than
+// the requested digits. Callers who need the rendered form to carry
+// exactly `digits` decimal places must use `rescale` instead.
+pub fn round_does_not_pad_when_input_is_coarser_test() -> Nil {
+  let two_k = decimal.from_int(2000)
+  decimal.to_string(decimal.round(d: two_k, digits: 2, mode: rounding.HalfEven))
+  |> should.equal("2000")
+  let one = decimal.one()
+  decimal.to_string(decimal.round(d: one, digits: 4, mode: rounding.HalfEven))
+  |> should.equal("1")
+}
+
+pub fn rescale_pads_when_input_is_coarser_test() -> Nil {
+  let assert Ok(two_k_padded) =
+    decimal.rescale(
+      d: decimal.from_int(2000),
+      target_exponent: -2,
+      mode: rounding.HalfEven,
+    )
+  decimal.to_string(two_k_padded)
+  |> should.equal("2000.00")
+  let assert Ok(one_padded) =
+    decimal.rescale(
+      d: decimal.one(),
+      target_exponent: -4,
+      mode: rounding.HalfEven,
+    )
+  decimal.to_string(one_padded)
+  |> should.equal("1.0000")
+}
+
 // Issue #23: try_new rejects coefficients whose rendered form would
 // exceed max_safe_coefficient. Without this guard, to_string(new(c, e))
 // could produce a digit string that from_string refuses to parse,

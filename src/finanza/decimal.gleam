@@ -704,10 +704,18 @@ fn half_even_bump(r r: Int, denominator denominator: Int, q q: Int) -> Bool {
 
 // --- Rescaling -----------------------------------------------------------
 
-/// Round to `digits` decimal places. When the input is already at
-/// equal or coarser precision, the original `Decimal` is returned
-/// unchanged (no zero-padding); call [`rescale`](#rescale) to force a
-/// target exponent.
+/// Round to `digits` decimal places, **trim only**. When the input
+/// is already at equal or coarser precision than `-digits` (e.g.
+/// `Decimal(coefficient: 2000, exponent: 0)` against `digits: 2`),
+/// the original `Decimal` is returned unchanged — `round` never
+/// pads with zeros, so `to_string(round(from_int(2000), 2, _))` is
+/// `"2000"`, not `"2000.00"`.
+///
+/// Use [`rescale`](#rescale) when the result must always have
+/// exponent `-digits` (i.e. the rendered form must always have
+/// exactly `digits` decimal places, including trailing zeros) —
+/// `rescale` returns `Result` because the padding direction can
+/// overflow `±9_007_199_254_740_991`.
 pub fn round(
   d d: Decimal,
   digits digits: Int,
@@ -718,9 +726,9 @@ pub fn round(
   drop_digits(d: d, target_exponent: target_exponent, mode: mode)
 }
 
-/// Truncate to `digits` decimal places (rounding toward zero). When
-/// the input is already at equal or coarser precision, the original
-/// `Decimal` is returned unchanged.
+/// Truncate to `digits` decimal places (rounding toward zero), **trim
+/// only**. Like [`round`](#round), the input is returned unchanged
+/// when it is already at equal or coarser precision than `-digits`.
 pub fn truncate(d d: Decimal, digits digits: Int) -> Decimal {
   round(d: d, digits: digits, mode: rounding.Down)
 }

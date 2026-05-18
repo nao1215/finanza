@@ -97,8 +97,19 @@ fn build_schedule(
     decimal.multiply(state.balance, rate)
     |> result.map_error(interest.ArithmeticError),
   )
-  let rounded_interest =
-    decimal.round(d: raw_interest, digits: digits, mode: rounding.HalfEven)
+  // Issue #25: rescale (not round) so the rendered interest amount
+  // always carries exactly `digits` decimal places, including when
+  // the multiplication produced an exact whole number (e.g.
+  // `100% * $100 = $100` should still render as `100.00` at
+  // `digits: 2`).
+  use rounded_interest <- result.try(
+    decimal.rescale(
+      d: raw_interest,
+      target_exponent: -digits,
+      mode: rounding.HalfEven,
+    )
+    |> result.map_error(interest.ArithmeticError),
+  )
   use principal_part <- result.try(
     decimal.subtract(payment, rounded_interest)
     |> result.map_error(interest.ArithmeticError),
