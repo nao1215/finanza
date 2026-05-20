@@ -512,17 +512,67 @@ pub fn expiry_valid(
   month >= today_month
 }
 
-/// Parse a `"MM/YY"` or `"MM/YYYY"` expiry string into a
-/// `#(month, year)` tuple. Years given as two digits are expanded by
-/// prefixing `20`.
+/// Parse a card expiry string into a `#(month, year)` tuple. Accepts
+/// the four common shapes real-world entry forms produce:
+///
+/// - `MM/YY` and `MM/YYYY` (slash) — e.g. `"12/26"`, `"12/2026"`
+/// - `MM-YY` and `MM-YYYY` (hyphen) — e.g. `"12-26"`, `"12-2026"`
+/// - `MM.YY` and `MM.YYYY` (dot) — e.g. `"12.26"`, `"12.2026"`
+/// - `MMYY` and `MMYYYY` (no separator) — e.g. `"1226"`, `"122026"`
+///
+/// Surrounding whitespace is ignored. Years given as two digits are
+/// expanded by prefixing `20` (so `26` becomes `2026`). Single-digit
+/// months are accepted in the separator forms (`"1/26"`, `"1-26"`,
+/// `"1.26"`) but not in the unseparated form — `"126"` is ambiguous
+/// between "January 2026" and "December year 26" so the parser
+/// refuses to guess and returns `Error(InvalidExpiry)`.
 pub fn parse_expiry(input input: String) -> Result(#(Int, Int), ValidationError) {
-  case string.split(input, "/") {
-    [month_str, year_str] -> {
+  let trimmed = string.trim(input)
+  case extract_month_year(trimmed) {
+    Ok(#(month_str, year_str)) -> {
       use month <- result.try(parse_month(month_str))
       use year <- result.map(parse_year(year_str))
       #(month, year)
     }
-    _ -> Error(InvalidExpiry)
+    Error(Nil) -> Error(InvalidExpiry)
+  }
+}
+
+/// Split a trimmed expiry input into its `MM` and `YY`/`YYYY` parts,
+/// trying the separator shapes first and then the unseparated
+/// `MMYY` / `MMYYYY` forms. Returns the raw substrings; the caller
+/// runs `parse_month` / `parse_year` on each piece.
+fn extract_month_year(trimmed: String) -> Result(#(String, String), Nil) {
+  case split_on_first(trimmed, ["/", "-", "."]) {
+    Ok(parts) -> Ok(parts)
+    Error(Nil) ->
+      case string.length(trimmed) {
+        4 ->
+          Ok(#(
+            string.slice(from: trimmed, at_index: 0, length: 2),
+            string.slice(from: trimmed, at_index: 2, length: 2),
+          ))
+        6 ->
+          Ok(#(
+            string.slice(from: trimmed, at_index: 0, length: 2),
+            string.slice(from: trimmed, at_index: 2, length: 4),
+          ))
+        _ -> Error(Nil)
+      }
+  }
+}
+
+fn split_on_first(
+  input: String,
+  separators: List(String),
+) -> Result(#(String, String), Nil) {
+  case separators {
+    [] -> Error(Nil)
+    [head, ..rest] ->
+      case string.split_once(input, on: head) {
+        Ok(parts) -> Ok(parts)
+        Error(Nil) -> split_on_first(input, rest)
+      }
   }
 }
 

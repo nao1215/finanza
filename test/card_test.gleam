@@ -298,10 +298,13 @@ pub fn parse_expiry_invalid_year_length_test() -> Nil {
   |> should.equal(Error(card.InvalidExpiry))
 }
 
-pub fn parse_expiry_missing_separator_test() -> Nil {
-  card.parse_expiry(input: "1228")
-  |> should.equal(Error(card.InvalidExpiry))
-}
+// `parse_expiry_missing_separator_test` used to pin `"1228"` as
+// `Error(InvalidExpiry)`. As of #42, `MMYY` and `MMYYYY` are
+// accepted formats, so the four-digit "1228" now parses to
+// `Ok(#(12, 2028))`. The new acceptance contract is covered by
+// `parse_expiry_mmyy_no_separator_test` /
+// `parse_expiry_mmyyyy_no_separator_test`; the three-digit
+// ambiguous case is pinned by `parse_expiry_rejects_three_digit_unseparated_test`.
 
 pub fn normalize_folds_fullwidth_digits_test() -> Nil {
   card.normalize(pan: "４２４２４２４２４２４２４２４２")
@@ -339,6 +342,42 @@ pub fn parse_expiry_rejects_negative_month_test() -> Nil {
 
 pub fn parse_expiry_rejects_zero_month_test() -> Nil {
   card.parse_expiry(input: "0/26")
+  |> should.equal(Error(card.InvalidExpiry))
+}
+
+pub fn parse_expiry_hyphen_separator_short_year_test() -> Nil {
+  card.parse_expiry(input: "12-26")
+  |> should.equal(Ok(#(12, 2026)))
+}
+
+pub fn parse_expiry_hyphen_separator_long_year_test() -> Nil {
+  card.parse_expiry(input: "12-2026")
+  |> should.equal(Ok(#(12, 2026)))
+}
+
+pub fn parse_expiry_dot_separator_short_year_test() -> Nil {
+  card.parse_expiry(input: "12.26")
+  |> should.equal(Ok(#(12, 2026)))
+}
+
+pub fn parse_expiry_dot_separator_long_year_test() -> Nil {
+  card.parse_expiry(input: "12.2026")
+  |> should.equal(Ok(#(12, 2026)))
+}
+
+pub fn parse_expiry_mmyy_no_separator_test() -> Nil {
+  card.parse_expiry(input: "1226")
+  |> should.equal(Ok(#(12, 2026)))
+}
+
+pub fn parse_expiry_mmyyyy_no_separator_test() -> Nil {
+  card.parse_expiry(input: "122026")
+  |> should.equal(Ok(#(12, 2026)))
+}
+
+pub fn parse_expiry_rejects_three_digit_unseparated_test() -> Nil {
+  // 126 is ambiguous (1/26 vs 12/6); the parser refuses to guess.
+  card.parse_expiry(input: "126")
   |> should.equal(Error(card.InvalidExpiry))
 }
 
