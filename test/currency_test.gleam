@@ -1,3 +1,4 @@
+import gleam/list
 import gleam/order
 import gleam/result
 import gleeunit/should
@@ -260,9 +261,40 @@ pub fn allocate_rejects_empty_ratios_test() -> Nil {
   |> should.equal(Error(currency.EmptyRatios))
 }
 
-pub fn allocate_rejects_zero_ratio_test() -> Nil {
+pub fn allocate_accepts_zero_in_mixed_list_test() -> Nil {
+  // `[1, 0, 1]` is the "skip the middle recipient" pattern. As of
+  // #49 the function distributes across the non-zero slots and
+  // assigns zero to the skipped slot.
+  let m = currency.from_minor(units: 10_000, currency: catalog.usd())
+  let assert Ok(parts) = currency.allocate(m: m, ratios: [1, 0, 1])
+  let amounts =
+    list.map(parts, fn(p) {
+      let assert Ok(units) = currency.to_minor(m: p, mode: rounding.HalfEven)
+      units
+    })
+  amounts |> should.equal([5000, 0, 5000])
+}
+
+pub fn allocate_accepts_zero_at_edges_test() -> Nil {
+  let m = currency.from_minor(units: 10_000, currency: catalog.usd())
+  let assert Ok(parts) = currency.allocate(m: m, ratios: [0, 1, 0])
+  let amounts =
+    list.map(parts, fn(p) {
+      let assert Ok(units) = currency.to_minor(m: p, mode: rounding.HalfEven)
+      units
+    })
+  amounts |> should.equal([0, 10_000, 0])
+}
+
+pub fn allocate_rejects_all_zeros_test() -> Nil {
   let m = currency.from_minor(units: 100, currency: catalog.usd())
-  currency.allocate(m: m, ratios: [1, 0, 1])
+  currency.allocate(m: m, ratios: [0, 0, 0])
+  |> should.equal(Error(currency.NonPositiveRatio))
+}
+
+pub fn allocate_rejects_negative_ratio_test() -> Nil {
+  let m = currency.from_minor(units: 100, currency: catalog.usd())
+  currency.allocate(m: m, ratios: [1, -1, 1])
   |> should.equal(Error(currency.NonPositiveRatio))
 }
 
