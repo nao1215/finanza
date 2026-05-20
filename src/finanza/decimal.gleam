@@ -87,6 +87,20 @@ pub type ConstructError {
 /// matches across targets.
 const max_safe_coefficient: Int = 9_007_199_254_740_991
 
+/// Upper bound on `digits` arguments to [`divide`](#divide) (and the
+/// other operations that scale by `10^digits`) when both operands are
+/// unit-magnitude. `max_safe_coefficient` is ≈ 9 × 10^15, so
+/// `10^16 > max_safe_coefficient` and division to 16 fractional
+/// digits already exceeds the safe range even for `1/1`. Larger
+/// operands shrink the practical headroom further; treat
+/// `max_safe_digits` as the **best case** ceiling, not a guarantee.
+/// For any specific division, the safe `digits` value is bounded by
+/// `floor(log10(max_safe_coefficient / abs(a.coefficient)))` plus
+/// `b.exponent − a.exponent`. Callers that need more precision should
+/// reach for a dedicated arbitrary-precision library (e.g. Python
+/// `decimal` with `prec=50+`).
+pub const max_safe_digits: Int = 15
+
 // --- Constructors --------------------------------------------------------
 
 /// The decimal value 0.
@@ -719,7 +733,17 @@ pub fn multiply(a a: Decimal, b b: Decimal) -> Result(Decimal, ArithmeticError) 
 ///
 /// Returns [`DivisionByZero`](#ArithmeticError) when `b` is zero, or
 /// [`PrecisionExceeded`](#ArithmeticError) when the intermediate
-/// representation would exceed `±9_007_199_254_740_991`.
+/// representation would exceed `±9_007_199_254_740_991` (the
+/// JavaScript-safe integer ceiling). See
+/// [`max_safe_digits`](#max_safe_digits) for the practical upper
+/// bound on `digits`: requests above that value will exceed the
+/// precision window even when both operands are unit-magnitude,
+/// and larger operands shrink the headroom further. For the
+/// per-call boundary the rule of thumb is
+/// `digits ≤ floor(log10(max_safe_coefficient / abs(a.coefficient)))
+///  + (b.exponent − a.exponent)`. Callers needing more precision
+/// should reach for a dedicated arbitrary-precision library
+/// (Python `decimal` with `prec=50+`, etc.).
 pub fn divide(
   a a: Decimal,
   b b: Decimal,
