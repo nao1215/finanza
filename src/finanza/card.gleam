@@ -56,13 +56,23 @@ pub opaque type MaskOptions {
 // --- Normalisation ------------------------------------------------------
 
 /// Strip ASCII whitespace (` `, `\t`, `\n`, `\r`, VT, FF) and
-/// hyphen-style separators (`-`, `_`, `.`). Does not validate that
-/// the result is digits-only. Unicode whitespace (NBSP, ideographic
-/// space) is not stripped — pre-normalise if needed.
+/// hyphen-style separators (`-`, `_`, `.`), and fold the three
+/// digit-Unicode blocks IMEs commonly produce into their ASCII
+/// equivalents:
+///
+/// - FULLWIDTH DIGIT ZERO..NINE (`U+FF10..U+FF19`) → `"0".."9"`
+/// - ARABIC-INDIC DIGIT ZERO..NINE (`U+0660..U+0669`) → `"0".."9"`
+/// - EXTENDED ARABIC-INDIC DIGIT ZERO..NINE (`U+06F0..U+06F9`) → `"0".."9"`
+///
+/// Other Unicode whitespace (NBSP, ideographic space) is not stripped
+/// — pre-normalise if needed. The function does not validate that the
+/// result is digits-only; downstream `luhn_valid` and `validate`
+/// continue to enforce that contract.
 pub fn normalize(pan pan: String) -> String {
   pan
   |> string.to_graphemes
   |> list.filter(keeping: is_pan_char)
+  |> list.map(with: fold_digit_grapheme)
   |> string.concat
 }
 
@@ -71,6 +81,46 @@ fn is_pan_char(grapheme: String) -> Bool {
     " " | "\t" | "\n" | "\r" | "\u{000B}" | "\u{000C}" -> False
     "-" | "_" | "." -> False
     _ -> True
+  }
+}
+
+/// Map fullwidth and Arabic-Indic digit code points to their ASCII
+/// equivalents. Non-digit graphemes pass through unchanged so the
+/// downstream digit-or-not check still sees the original input for
+/// reporting.
+fn fold_digit_grapheme(grapheme: String) -> String {
+  case grapheme {
+    "\u{FF10}" -> "0"
+    "\u{FF11}" -> "1"
+    "\u{FF12}" -> "2"
+    "\u{FF13}" -> "3"
+    "\u{FF14}" -> "4"
+    "\u{FF15}" -> "5"
+    "\u{FF16}" -> "6"
+    "\u{FF17}" -> "7"
+    "\u{FF18}" -> "8"
+    "\u{FF19}" -> "9"
+    "\u{0660}" -> "0"
+    "\u{0661}" -> "1"
+    "\u{0662}" -> "2"
+    "\u{0663}" -> "3"
+    "\u{0664}" -> "4"
+    "\u{0665}" -> "5"
+    "\u{0666}" -> "6"
+    "\u{0667}" -> "7"
+    "\u{0668}" -> "8"
+    "\u{0669}" -> "9"
+    "\u{06F0}" -> "0"
+    "\u{06F1}" -> "1"
+    "\u{06F2}" -> "2"
+    "\u{06F3}" -> "3"
+    "\u{06F4}" -> "4"
+    "\u{06F5}" -> "5"
+    "\u{06F6}" -> "6"
+    "\u{06F7}" -> "7"
+    "\u{06F8}" -> "8"
+    "\u{06F9}" -> "9"
+    _ -> grapheme
   }
 }
 
