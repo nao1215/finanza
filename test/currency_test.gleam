@@ -170,6 +170,31 @@ pub fn multiply_test() -> Nil {
   |> should.equal(3000)
 }
 
+pub fn multiply_jpy_respects_zero_exponent_test() -> Nil {
+  let m = currency.from_minor(units: 100, currency: catalog.jpy())
+  let assert Ok(factor) = decimal.from_string("0.5")
+  let assert Ok(product) = currency.multiply(m: m, factor: factor)
+  currency.to_string(m: product)
+  |> should.equal("JPY 50")
+}
+
+pub fn multiply_jpy_small_factor_rounds_to_zero_test() -> Nil {
+  let m = currency.from_minor(units: 100, currency: catalog.jpy())
+  let assert Ok(factor) = decimal.from_string("0.001")
+  let assert Ok(product) = currency.multiply(m: m, factor: factor)
+  // 100 * 0.001 = 0.1 → HalfEven rounds to 0 for JPY (exponent 0).
+  currency.to_string(m: product)
+  |> should.equal("JPY 0")
+}
+
+pub fn multiply_usd_keeps_two_decimals_test() -> Nil {
+  let m = currency.from_minor(units: 10_000, currency: catalog.usd())
+  let assert Ok(factor) = decimal.from_string("0.5")
+  let assert Ok(product) = currency.multiply(m: m, factor: factor)
+  currency.to_string(m: product)
+  |> should.equal("USD 50.00")
+}
+
 pub fn divide_test() -> Nil {
   let m = currency.from_minor(units: 1000, currency: catalog.usd())
   let divisor = decimal.from_int(n: 3)
