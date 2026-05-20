@@ -25,6 +25,24 @@ pub fn from_int_test() -> Nil {
   |> should.equal(0)
 }
 
+pub fn from_float_half_test() -> Nil {
+  let assert Ok(value) = decimal.from_float(0.5)
+  decimal.equal(value, decimal.new(coefficient: 5, exponent: -1))
+  |> should.be_true
+}
+
+pub fn from_float_zero_test() -> Nil {
+  let assert Ok(value) = decimal.from_float(0.0)
+  decimal.is_zero(value)
+  |> should.be_true
+}
+
+pub fn from_float_negative_test() -> Nil {
+  let assert Ok(value) = decimal.from_float(-1.25)
+  decimal.equal(value, decimal.new(coefficient: -125, exponent: -2))
+  |> should.be_true
+}
+
 pub fn new_explicit_test() -> Nil {
   let value = decimal.new(coefficient: 12_345, exponent: -2)
   decimal.coefficient(value)

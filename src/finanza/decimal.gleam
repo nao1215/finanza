@@ -21,6 +21,7 @@
 //// so behaviour is consistent across targets.
 
 import gleam/bool
+import gleam/float
 import gleam/int
 import gleam/list
 import gleam/order
@@ -123,6 +124,33 @@ pub fn try_from_int(n n: Int) -> Result(Decimal, ConstructError) {
     return: Error(CoefficientTooLarge),
   )
   Ok(Decimal(n, 0))
+}
+
+/// Build a `Decimal` from a `Float`.
+///
+/// The conversion goes through `float.to_string |> from_string`,
+/// which means the resulting `Decimal` matches Gleam's textual
+/// rendering of the float. That rendering is the same one
+/// `gleam_stdlib` uses for `string.inspect(value)` and is generally
+/// the "shortest IEEE-754 round-trip" form on both targets — so
+/// inputs like `0.5` and `3.14` survive intact, while pathological
+/// floats (`0.1 +. 0.2` → `0.30000000000000004`) carry their full
+/// double expansion into the resulting `Decimal`.
+///
+/// Returns the same `ParseError` variants `from_string` does so a
+/// runtime float that for any reason cannot be parsed (NaN /
+/// Infinity surface as non-numeric strings on Erlang) propagates as
+/// `Error(_)` rather than panicking.
+///
+/// Use this when the input genuinely is a `Float` (exchange-rate
+/// APIs, telemetry); prefer `from_string` or `try_new` when the
+/// caller already holds a textual or coefficient-and-exponent
+/// representation, since those skip the float round-trip and stay
+/// target-portable.
+pub fn from_float(value value: Float) -> Result(Decimal, ParseError) {
+  value
+  |> float.to_string
+  |> from_string
 }
 
 /// Build a `Decimal` directly from a coefficient and exponent.
