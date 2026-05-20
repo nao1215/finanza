@@ -11,6 +11,10 @@ and this project is expected to follow [Semantic Versioning](https://semver.org/
 
 - `finanza/decimal`: `decimal.new(coefficient, exponent)` now panics with a structured message that names the function, echoes the offending coefficient and exponent, states the safe bound (`±9_007_199_254_740_991`), and points readers at `decimal.try_new` for the `Result`-returning variant. The previous `let assert Ok(d) = try_new(...)` body produced the generic `Pattern match failed, unmatched value: Error(CoefficientTooLarge)` runtime message, which left the caller without a hint about what the safe range was or which alternative constructor to use. (#38)
 
+### Added
+
+- `finanza/card`: `card.normalize` now folds the three Unicode digit blocks IMEs commonly produce — FULLWIDTH DIGIT ZERO..NINE (`U+FF10..U+FF19`), ARABIC-INDIC DIGIT ZERO..NINE (`U+0660..U+0669`), and EXTENDED ARABIC-INDIC DIGIT ZERO..NINE (`U+06F0..U+06F9`) — into their ASCII equivalents. PANs typed on Japanese-locale IMEs (`４２４２４２４２`), Arabic-script keyboards (`٤٢٤٢`), or Persian/Urdu keyboards (`۴۲۴۲`) now flow through `normalize → luhn_valid → validate` like ASCII input. Other Unicode digit forms and non-ASCII whitespace are still left to the caller. (#39)
+
 ### Fixed
 
 - `finanza/card`: `card.parse_expiry(input: "12/-1")` now returns `Error(InvalidExpiry)` instead of `Ok(#(12, 1999))`. The two-digit length check accepted `-1` (length two, parses as `-1`) and the `20YY` expansion silently rewrote it to `1999`, masking caller typos and malicious input as a "successful" parse that downstream `expiry_valid` then flagged as expired. Negative years on the four-digit branch were already rejected via the length filter (e.g. `"-2026"` has length five) but are now also caught explicitly. `parse_month`'s existing `1..12` guard already rejected negative months. (#41)

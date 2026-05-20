@@ -303,6 +303,28 @@ pub fn parse_expiry_missing_separator_test() -> Nil {
   |> should.equal(Error(card.InvalidExpiry))
 }
 
+pub fn normalize_folds_fullwidth_digits_test() -> Nil {
+  card.normalize(pan: "４２４２４２４２４２４２４２４２")
+  |> should.equal("4242424242424242")
+}
+
+pub fn normalize_folds_arabic_indic_digits_test() -> Nil {
+  // ٤ = U+0664, ٢ = U+0662 — "4242"
+  card.normalize(pan: "٤٢٤٢")
+  |> should.equal("4242")
+}
+
+pub fn normalize_folds_extended_arabic_indic_digits_test() -> Nil {
+  // ۴ = U+06F4, ۲ = U+06F2 — "4242"
+  card.normalize(pan: "۴۲۴۲")
+  |> should.equal("4242")
+}
+
+pub fn normalize_strips_separators_and_folds_test() -> Nil {
+  card.normalize(pan: "４２４２-４２４２ ４２４２.４２４２")
+  |> should.equal("4242424242424242")
+}
+
 pub fn parse_expiry_rejects_negative_two_digit_year_test() -> Nil {
   // `"-1"` previously slipped through the length check (length 2)
   // and was silently coerced to `2000 + (-1) = 1999`.
