@@ -491,6 +491,7 @@ fn parse_year(s: String) -> Result(Int, ValidationError) {
     return: Error(InvalidExpiry),
   )
   case int.parse(trimmed) {
+    Ok(y) if y < 0 -> Error(InvalidExpiry)
     Ok(y) if length == 4 -> Ok(y)
     Ok(y) -> Ok(2000 + y)
     Error(Nil) -> Error(InvalidExpiry)
