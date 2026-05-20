@@ -7,6 +7,10 @@ and this project is expected to follow [Semantic Versioning](https://semver.org/
 
 ## [Unreleased]
 
+### Fixed
+
+- `finanza/card`: `card.luhn_valid` now returns `False` for any input that contains a non-digit grapheme. The previous implementation silently dropped non-digit graphemes from the checksum sum, which left the partial sum at zero for any all-non-digit input (`"abc"`, `" "`, `"!@#$"`, `"🙂🙂🙂🙂"`) and reported `True`. The empty string still returns `False`. Mixed digit / non-digit inputs (`"4242 4242 4242 4242"`) now consistently return `False` regardless of whether the partial sum happened to land on a multiple of ten. Callers that want to normalise whitespace or formatting before the check should pre-process through `card.normalize`. (#37)
+
 ## [0.6.0] - 2026-05-18
 
 ### Added
