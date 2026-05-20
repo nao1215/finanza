@@ -208,14 +208,30 @@ pub fn subtract(a a: Money, b b: Money) -> Result(Money, CurrencyError) {
 }
 
 /// Multiply a money value by a scalar.
+///
+/// The product is rescaled to the currency's minor-unit exponent
+/// using `HalfEven` so the resulting `Money` renders with exactly
+/// the digits the currency supports — `JPY 100 × 0.5 → JPY 50`,
+/// `USD 100.00 × 0.5 → USD 50.00`, `JPY 100 × 0.001 → JPY 0`.
+/// Use `decimal.multiply` directly when you need the unrescaled
+/// product (e.g. interest-rate calculations that downstream of
+/// the multiply will rescale themselves).
 pub fn multiply(
   m m: Money,
   factor factor: decimal.Decimal,
 ) -> Result(Money, CurrencyError) {
-  use product <- result.map(
+  use product <- result.try(
     decimal.multiply(m.amount, factor) |> result.map_error(ArithmeticError),
   )
-  Money(amount: product, currency: m.currency)
+  use rescaled <- result.map(
+    decimal.rescale(
+      d: product,
+      target_exponent: -m.currency.exponent,
+      mode: rounding.HalfEven,
+    )
+    |> result.map_error(ArithmeticError),
+  )
+  Money(amount: rescaled, currency: m.currency)
 }
 
 /// Divide a money value by a scalar, rounding the result to the
