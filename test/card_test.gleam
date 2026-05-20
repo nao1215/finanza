@@ -303,6 +303,23 @@ pub fn parse_expiry_missing_separator_test() -> Nil {
   |> should.equal(Error(card.InvalidExpiry))
 }
 
+pub fn parse_expiry_rejects_negative_two_digit_year_test() -> Nil {
+  // `"-1"` previously slipped through the length check (length 2)
+  // and was silently coerced to `2000 + (-1) = 1999`.
+  card.parse_expiry(input: "12/-1")
+  |> should.equal(Error(card.InvalidExpiry))
+}
+
+pub fn parse_expiry_rejects_negative_month_test() -> Nil {
+  card.parse_expiry(input: "-1/26")
+  |> should.equal(Error(card.InvalidExpiry))
+}
+
+pub fn parse_expiry_rejects_zero_month_test() -> Nil {
+  card.parse_expiry(input: "0/26")
+  |> should.equal(Error(card.InvalidExpiry))
+}
+
 // --- Helpers ------------------------------------------------------------
 
 fn list_all(items: List(a), f: fn(a) -> Bool) -> Bool {
