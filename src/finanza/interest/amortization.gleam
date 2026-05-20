@@ -62,6 +62,7 @@ pub fn schedule(
   periods periods: Int,
   digits digits: Int,
 ) -> Result(List(Period), interest.InterestError) {
+  use <- bool.guard(when: periods == 0, return: Ok([]))
   use payment_amount <- result.try(interest.payment(
     principal: principal,
     rate_per_period: rate_per_period,

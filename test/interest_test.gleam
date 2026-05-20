@@ -92,6 +92,50 @@ pub fn simple_interest_rejects_negative_periods_test() -> Nil {
   |> should.equal(Error(interest.PeriodsOutOfRange))
 }
 
+pub fn future_value_zero_periods_returns_present_test() -> Nil {
+  let assert Ok(p) = decimal.from_string("1000")
+  let assert Ok(r) = decimal.from_string("0.05")
+  let assert Ok(expected) = decimal.from_string("1000.00")
+  interest.future_value(present: p, rate_per_period: r, periods: 0, digits: 2)
+  |> should.equal(Ok(expected))
+}
+
+pub fn present_value_zero_periods_returns_future_test() -> Nil {
+  let assert Ok(fv) = decimal.from_string("1500")
+  let assert Ok(r) = decimal.from_string("0.05")
+  let assert Ok(expected) = decimal.from_string("1500.00")
+  interest.present_value(future: fv, rate_per_period: r, periods: 0, digits: 2)
+  |> should.equal(Ok(expected))
+}
+
+pub fn compound_interest_zero_years_returns_zero_test() -> Nil {
+  let assert Ok(p) = decimal.from_string("1000")
+  let assert Ok(r) = decimal.from_string("0.05")
+  let assert Ok(result) =
+    interest.compound_interest(
+      principal: p,
+      annual_rate: r,
+      years: 0,
+      compounds_per_year: 1,
+      digits: 2,
+    )
+  decimal.is_zero(result) |> should.be_true
+}
+
+pub fn future_value_rejects_negative_periods_test() -> Nil {
+  let assert Ok(p) = decimal.from_string("1000")
+  let assert Ok(r) = decimal.from_string("0.05")
+  interest.future_value(present: p, rate_per_period: r, periods: -1, digits: 2)
+  |> should.equal(Error(interest.PeriodsOutOfRange))
+}
+
+pub fn payment_zero_periods_still_errors_test() -> Nil {
+  let assert Ok(p) = decimal.from_string("1000")
+  let assert Ok(r) = decimal.from_string("0.05")
+  interest.payment(principal: p, rate_per_period: r, periods: 0, digits: 2)
+  |> should.equal(Error(interest.PeriodsOutOfRange))
+}
+
 // --- Future / present value ---------------------------------------------
 
 pub fn future_value_test() -> Nil {
@@ -205,6 +249,13 @@ pub fn schedule_periods_test() -> Nil {
   rows
   |> list_length
   |> should.equal(12)
+}
+
+pub fn schedule_zero_periods_returns_empty_test() -> Nil {
+  let assert Ok(p) = decimal.from_string("1000")
+  let assert Ok(r) = decimal.from_string("0.05")
+  amortization.schedule(principal: p, rate_per_period: r, periods: 0, digits: 2)
+  |> should.equal(Ok([]))
 }
 
 pub fn schedule_closes_to_zero_test() -> Nil {

@@ -133,9 +133,13 @@ pub fn compound_interest(
 ) -> Result(decimal.Decimal, InterestError) {
   use _ <- result.try(check_principal(principal))
   use _ <- result.try(check_rate(annual_rate))
-  use _ <- result.try(check_periods(years))
+  use _ <- result.try(check_periods_non_negative(years))
   use _ <- result.try(check_compounds(compounds_per_year))
   use _ <- result.try(check_digits(digits))
+  use <- bool.guard(
+    when: years == 0,
+    return: rescale_to_digits(decimal.zero(), digits),
+  )
   let total_periods = years * compounds_per_year
   use _ <- result.try(check_periods(total_periods))
   let work_digits = max_work_digits
@@ -172,8 +176,12 @@ pub fn future_value(
   digits digits: Int,
 ) -> Result(decimal.Decimal, InterestError) {
   use _ <- result.try(check_rate(rate_per_period))
-  use _ <- result.try(check_periods(periods))
+  use _ <- result.try(check_periods_non_negative(periods))
   use _ <- result.try(check_digits(digits))
+  use <- bool.guard(
+    when: periods == 0,
+    return: rescale_to_digits(present, digits),
+  )
   let work_digits = max_work_digits
   use growth <- result.try(growth_factor(
     rate: rate_per_period,
@@ -198,8 +206,12 @@ pub fn present_value(
   digits digits: Int,
 ) -> Result(decimal.Decimal, InterestError) {
   use _ <- result.try(check_rate(rate_per_period))
-  use _ <- result.try(check_periods(periods))
+  use _ <- result.try(check_periods_non_negative(periods))
   use _ <- result.try(check_digits(digits))
+  use <- bool.guard(
+    when: periods == 0,
+    return: rescale_to_digits(future, digits),
+  )
   let work_digits = max_work_digits
   use growth <- result.try(growth_factor(
     rate: rate_per_period,
