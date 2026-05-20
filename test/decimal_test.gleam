@@ -78,6 +78,42 @@ pub fn from_string_rejects_garbage_exponent_test() -> Nil {
   |> should.equal(Error(decimal.InvalidCharacter(char: "e", position: 1)))
 }
 
+pub fn max_safe_digits_is_at_least_15_test() -> Nil {
+  // The documented unit-magnitude precision ceiling.
+  { decimal.max_safe_digits >= 15 }
+  |> should.be_true
+}
+
+pub fn divide_at_max_safe_digits_for_one_over_seven_succeeds_test() -> Nil {
+  // Unit-magnitude operands at the documented ceiling round-trip
+  // without `PrecisionExceeded`.
+  let assert Ok(result) =
+    decimal.divide(
+      a: decimal.from_int(1),
+      b: decimal.from_int(7),
+      digits: decimal.max_safe_digits,
+      mode: rounding.HalfEven,
+    )
+  decimal.to_string(result)
+  |> should.equal("0.142857142857143")
+}
+
+pub fn divide_above_max_safe_digits_exceeds_precision_test() -> Nil {
+  // Documented failure mode: `digits = max_safe_digits + 1` already
+  // exceeds the safe coefficient bound for unit-magnitude operands.
+  case
+    decimal.divide(
+      a: decimal.from_int(1),
+      b: decimal.from_int(7),
+      digits: decimal.max_safe_digits + 1,
+      mode: rounding.HalfEven,
+    )
+  {
+    Error(decimal.PrecisionExceeded) -> Nil
+    _ -> should.fail()
+  }
+}
+
 pub fn new_explicit_test() -> Nil {
   let value = decimal.new(coefficient: 12_345, exponent: -2)
   decimal.coefficient(value)
