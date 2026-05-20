@@ -136,8 +136,20 @@ pub fn try_from_int(n n: Int) -> Result(Decimal, ConstructError) {
 /// caller and might exceed the safe range — that variant returns
 /// a `Result` instead of panicking.
 pub fn new(coefficient coefficient: Int, exponent exponent: Int) -> Decimal {
-  let assert Ok(d) = try_new(coefficient: coefficient, exponent: exponent)
-  d
+  case try_new(coefficient: coefficient, exponent: exponent) {
+    Ok(d) -> d
+    Error(CoefficientTooLarge) -> {
+      let msg =
+        "finanza/decimal.new: coefficient "
+        <> int.to_string(coefficient)
+        <> " (exponent "
+        <> int.to_string(exponent)
+        <> ") would overflow the JS-safe range (|coefficient| > "
+        <> int.to_string(max_safe_coefficient)
+        <> "); use decimal.try_new for inputs that might exceed this bound"
+      panic as msg
+    }
+  }
 }
 
 /// Build a `Decimal` from a coefficient and exponent, returning a

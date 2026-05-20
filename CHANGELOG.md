@@ -7,6 +7,10 @@ and this project is expected to follow [Semantic Versioning](https://semver.org/
 
 ## [Unreleased]
 
+### Changed
+
+- `finanza/decimal`: `decimal.new(coefficient, exponent)` now panics with a structured message that names the function, echoes the offending coefficient and exponent, states the safe bound (`±9_007_199_254_740_991`), and points readers at `decimal.try_new` for the `Result`-returning variant. The previous `let assert Ok(d) = try_new(...)` body produced the generic `Pattern match failed, unmatched value: Error(CoefficientTooLarge)` runtime message, which left the caller without a hint about what the safe range was or which alternative constructor to use. (#38)
+
 ### Fixed
 
 - `finanza/card`: `card.luhn_valid` now returns `False` for any input that contains a non-digit grapheme. The previous implementation silently dropped non-digit graphemes from the checksum sum, which left the partial sum at zero for any all-non-digit input (`"abc"`, `" "`, `"!@#$"`, `"🙂🙂🙂🙂"`) and reported `True`. The empty string still returns `False`. Mixed digit / non-digit inputs (`"4242 4242 4242 4242"`) now consistently return `False` regardless of whether the partial sum happened to land on a multiple of ten. Callers that want to normalise whitespace or formatting before the check should pre-process through `card.normalize`. (#37)
