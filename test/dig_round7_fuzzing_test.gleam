@@ -222,6 +222,7 @@ pub fn fuzz_simple_interest_test() -> Nil {
       Ok(_) -> p4
       Error(interest.NegativePrincipal) -> p4
       Error(interest.NegativeRate) -> p4
+      Error(interest.RateBelowMinusOne) -> p4
       Error(interest.PeriodsOutOfRange) -> p4
       Error(interest.CompoundsOutOfRange) -> p4
       Error(interest.NegativeDigits) -> p4
@@ -243,6 +244,7 @@ pub fn fuzz_compound_interest_test() -> Nil {
       Ok(_) -> p5
       Error(interest.NegativePrincipal) -> p5
       Error(interest.NegativeRate) -> p5
+      Error(interest.RateBelowMinusOne) -> p5
       Error(interest.PeriodsOutOfRange) -> p5
       Error(interest.CompoundsOutOfRange) -> p5
       Error(interest.NegativeDigits) -> p5
@@ -263,6 +265,7 @@ pub fn fuzz_future_value_test() -> Nil {
       Ok(_) -> p4
       Error(interest.NegativePrincipal) -> p4
       Error(interest.NegativeRate) -> p4
+      Error(interest.RateBelowMinusOne) -> p4
       Error(interest.PeriodsOutOfRange) -> p4
       Error(interest.CompoundsOutOfRange) -> p4
       Error(interest.NegativeDigits) -> p4
@@ -283,6 +286,7 @@ pub fn fuzz_present_value_test() -> Nil {
       Ok(_) -> p4
       Error(interest.NegativePrincipal) -> p4
       Error(interest.NegativeRate) -> p4
+      Error(interest.RateBelowMinusOne) -> p4
       Error(interest.PeriodsOutOfRange) -> p4
       Error(interest.CompoundsOutOfRange) -> p4
       Error(interest.NegativeDigits) -> p4
@@ -303,6 +307,7 @@ pub fn fuzz_payment_test() -> Nil {
       Ok(_) -> p4
       Error(interest.NegativePrincipal) -> p4
       Error(interest.NegativeRate) -> p4
+      Error(interest.RateBelowMinusOne) -> p4
       Error(interest.PeriodsOutOfRange) -> p4
       Error(interest.CompoundsOutOfRange) -> p4
       Error(interest.NegativeDigits) -> p4
@@ -322,6 +327,7 @@ pub fn fuzz_effective_annual_rate_test() -> Nil {
       Ok(_) -> p3
       Error(interest.NegativePrincipal) -> p3
       Error(interest.NegativeRate) -> p3
+      Error(interest.RateBelowMinusOne) -> p3
       Error(interest.PeriodsOutOfRange) -> p3
       Error(interest.CompoundsOutOfRange) -> p3
       Error(interest.NegativeDigits) -> p3
@@ -345,6 +351,7 @@ pub fn fuzz_amortization_schedule_test() -> Nil {
       Ok(_) -> p4
       Error(interest.NegativePrincipal) -> p4
       Error(interest.NegativeRate) -> p4
+      Error(interest.RateBelowMinusOne) -> p4
       Error(interest.PeriodsOutOfRange) -> p4
       Error(interest.CompoundsOutOfRange) -> p4
       Error(interest.NegativeDigits) -> p4
