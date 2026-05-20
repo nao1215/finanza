@@ -227,11 +227,37 @@ pub fn payment_zero_rate_test() -> Nil {
   |> should.equal("100.00")
 }
 
-pub fn payment_rejects_negative_rate_test() -> Nil {
+pub fn payment_rejects_rate_below_minus_one_test() -> Nil {
+  // As of #50, rates in `[-1.0, ∞)` are accepted (deflation,
+  // depreciation, total loss). Only rates strictly below `-1.0`
+  // remain rejected — and they now emit `RateBelowMinusOne`.
   let assert Ok(p) = decimal.from_string("1000")
-  let assert Ok(r) = decimal.from_string("-0.01")
+  let assert Ok(r) = decimal.from_string("-1.5")
   interest.payment(principal: p, rate_per_period: r, periods: 12, digits: 2)
-  |> should.equal(Error(interest.NegativeRate))
+  |> should.equal(Error(interest.RateBelowMinusOne))
+}
+
+pub fn future_value_deflation_test() -> Nil {
+  let assert Ok(p) = decimal.from_string("1000")
+  let assert Ok(r) = decimal.from_string("-0.02")
+  let assert Ok(fv) =
+    interest.future_value(present: p, rate_per_period: r, periods: 1, digits: 2)
+  decimal.to_string(fv) |> should.equal("980.00")
+}
+
+pub fn future_value_total_loss_test() -> Nil {
+  let assert Ok(p) = decimal.from_string("1000")
+  let assert Ok(r) = decimal.from_string("-1.0")
+  let assert Ok(fv) =
+    interest.future_value(present: p, rate_per_period: r, periods: 1, digits: 2)
+  decimal.is_zero(fv) |> should.be_true
+}
+
+pub fn future_value_below_minus_one_rejected_test() -> Nil {
+  let assert Ok(p) = decimal.from_string("1000")
+  let assert Ok(r) = decimal.from_string("-1.5")
+  interest.future_value(present: p, rate_per_period: r, periods: 1, digits: 2)
+  |> should.equal(Error(interest.RateBelowMinusOne))
 }
 
 // --- Amortization schedule ----------------------------------------------

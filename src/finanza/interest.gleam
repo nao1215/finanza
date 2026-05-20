@@ -44,6 +44,7 @@
 
 import gleam/bool
 import gleam/int
+import gleam/order
 import gleam/result
 
 import finanza/decimal
@@ -53,7 +54,20 @@ import finanza/decimal/rounding
 pub type InterestError {
   /// `principal` was negative.
   NegativePrincipal
-  /// `rate` was negative.
+  /// `rate` was below `-1.0` (i.e. a return of less than `-100%`).
+  /// Returns less than `-100%` have no meaningful interpretation
+  /// in the TVM formulas — the resulting future value would be
+  /// negative for a positive principal. Rates in the range
+  /// `[-1.0, ∞)` are accepted (deflation, depreciation, total-loss
+  /// at exactly `-1.0`).
+  ///
+  /// The legacy `NegativeRate` variant is no longer emitted; it is
+  /// retained so existing pattern matches keep compiling.
+  RateBelowMinusOne
+  /// **Deprecated alias for `RateBelowMinusOne`**. Retained so
+  /// callers that pattern-matched on the previous "any negative
+  /// rate" reject path keep compiling, but the library never
+  /// returns this variant — it always emits `RateBelowMinusOne`.
   NegativeRate
   /// `periods` was zero or negative, or exceeded the supported range
   /// `1..=1200` (100 years of monthly compounding).
@@ -477,8 +491,21 @@ fn check_principal(p: decimal.Decimal) -> Result(Nil, InterestError) {
 }
 
 fn check_rate(r: decimal.Decimal) -> Result(Nil, InterestError) {
-  use <- bool.guard(when: decimal.is_negative(r), return: Error(NegativeRate))
+  use <- bool.guard(
+    when: rate_below_minus_one(r),
+    return: Error(RateBelowMinusOne),
+  )
   Ok(Nil)
+}
+
+/// `True` when `r < -1.0`. The TVM formulas accept `r >= -1.0`
+/// (deflation, depreciation, total loss at exactly `-1.0`) but
+/// reject rates that would make `1 + r < 0`, since the growth
+/// factor `(1 + r)^n` for non-integer or fractional applications
+/// has no real-valued interpretation in that regime.
+fn rate_below_minus_one(r: decimal.Decimal) -> Bool {
+  let minus_one = decimal.negate(decimal.one())
+  decimal.compare(r, minus_one) == order.Lt
 }
 
 fn check_periods(p: Int) -> Result(Nil, InterestError) {
