@@ -114,6 +114,48 @@ pub fn divide_above_max_safe_digits_exceeds_precision_test() -> Nil {
   }
 }
 
+pub fn format_checked_multi_char_thousands_rejected_test() -> Nil {
+  let assert Ok(d) = decimal.from_string("1234.5")
+  decimal.format_checked(d: d, thousands: "ab", decimal_separator: ".")
+  |> should.equal(
+    Error(decimal.MultiCharSeparator(field: "thousands", value: "ab")),
+  )
+}
+
+pub fn format_checked_multi_char_decimal_rejected_test() -> Nil {
+  let assert Ok(d) = decimal.from_string("1234.5")
+  decimal.format_checked(d: d, thousands: ",", decimal_separator: ",,")
+  |> should.equal(
+    Error(decimal.MultiCharSeparator(field: "decimal", value: ",,")),
+  )
+}
+
+pub fn format_checked_colliding_separators_rejected_test() -> Nil {
+  let assert Ok(d) = decimal.from_string("1234.5")
+  decimal.format_checked(d: d, thousands: ".", decimal_separator: ".")
+  |> should.equal(Error(decimal.SeparatorsCollide(value: ".")))
+}
+
+pub fn format_checked_empty_decimal_separator_rejected_test() -> Nil {
+  let assert Ok(d) = decimal.from_string("1234.5")
+  decimal.format_checked(d: d, thousands: ",", decimal_separator: "")
+  |> should.equal(Error(decimal.EmptyDecimalSeparator))
+}
+
+pub fn format_checked_accepts_standard_locale_test() -> Nil {
+  let assert Ok(d) = decimal.from_string("1234567.89")
+  decimal.format_checked(d: d, thousands: ",", decimal_separator: ".")
+  |> should.equal(Ok("1,234,567.89"))
+  decimal.format_checked(d: d, thousands: ".", decimal_separator: ",")
+  |> should.equal(Ok("1.234.567,89"))
+}
+
+pub fn format_checked_accepts_empty_thousands_test() -> Nil {
+  let assert Ok(d) = decimal.from_string("1234.5")
+  decimal.format_checked(d: d, thousands: "", decimal_separator: ".")
+  |> should.equal(Ok("1234.5"))
+}
+
 pub fn new_explicit_test() -> Nil {
   let value = decimal.new(coefficient: 12_345, exponent: -2)
   decimal.coefficient(value)

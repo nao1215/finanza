@@ -67,6 +67,26 @@ pub type ArithmeticError {
   PrecisionExceeded
 }
 
+/// Errors returned by [`format_checked`](#format_checked) when the
+/// thousands or decimal separator arguments would produce an
+/// ambiguous or un-parseable rendering.
+pub type FormatError {
+  /// A separator argument has more than one grapheme. The
+  /// `field` is either `"thousands"` or `"decimal"`; `value` is
+  /// the offending input echoed back so the caller can route
+  /// the failure to its locale layer.
+  MultiCharSeparator(field: String, value: String)
+  /// The `thousands` and `decimal_separator` arguments are equal
+  /// (and non-empty). The rendered output would contain the same
+  /// character at every separator position and parsers could not
+  /// disambiguate the integer / fractional split.
+  SeparatorsCollide(value: String)
+  /// The `decimal_separator` argument is the empty string. The
+  /// rendered output would lose the integer / fractional split
+  /// entirely (`"1234.5"` would format as `"1234,5"`).
+  EmptyDecimalSeparator
+}
+
 /// Errors returned by validated constructors
 /// ([`try_new`](#try_new), [`try_from_int`](#try_from_int)).
 pub type ConstructError {
@@ -579,6 +599,59 @@ pub fn format(
       decimal_separator: decimal_separator,
     )
   sign_prefix <> body
+}
+
+/// Like [`format`](#format), but validates the separator arguments
+/// against the locale-formatter contract and returns the failure as
+/// a `Result` instead of producing a garbled rendering. The checks
+/// catch the three configuration mistakes that `format` would
+/// otherwise swallow:
+///
+/// - `thousands` or `decimal_separator` with more than one grapheme
+///   (the function is a single-character separator formatter; longer
+///   inputs almost always indicate a config-pipeline bug)
+/// - identical `thousands` and `decimal_separator` (the output would
+///   render the same character at every separator position and be
+///   un-parseable round-trip)
+/// - empty `decimal_separator` (the output would lose the integer /
+///   fractional split entirely)
+///
+/// `thousands` empty is still accepted and yields "no grouping" —
+/// the standard contract for `to_string`. Use this entry point when
+/// the separator arguments come from configuration, locale data, or
+/// any other dynamic source where surfacing the failure as a value
+/// matters; keep using `format` when the arguments are call-site
+/// literals you control.
+pub fn format_checked(
+  d d: Decimal,
+  thousands thousands: String,
+  decimal_separator decimal_separator: String,
+) -> Result(String, FormatError) {
+  use _ <- result.try(check_separator_pair(thousands, decimal_separator))
+  Ok(format(d: d, thousands: thousands, decimal_separator: decimal_separator))
+}
+
+fn check_separator_pair(
+  thousands: String,
+  decimal_separator: String,
+) -> Result(Nil, FormatError) {
+  use <- bool.guard(
+    when: decimal_separator == "",
+    return: Error(EmptyDecimalSeparator),
+  )
+  use <- bool.guard(
+    when: string.length(decimal_separator) > 1,
+    return: Error(MultiCharSeparator(field: "decimal", value: decimal_separator)),
+  )
+  use <- bool.guard(
+    when: string.length(thousands) > 1,
+    return: Error(MultiCharSeparator(field: "thousands", value: thousands)),
+  )
+  use <- bool.guard(
+    when: thousands != "" && thousands == decimal_separator,
+    return: Error(SeparatorsCollide(value: thousands)),
+  )
+  Ok(Nil)
 }
 
 fn inject_thousands(
