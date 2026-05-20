@@ -65,6 +65,31 @@ pub fn luhn_empty_string_test() -> Nil {
   |> should.be_false
 }
 
+pub fn luhn_rejects_all_letters_test() -> Nil {
+  card.luhn_valid(digits: "abc")
+  |> should.be_false
+}
+
+pub fn luhn_rejects_punctuation_test() -> Nil {
+  card.luhn_valid(digits: "!@#$")
+  |> should.be_false
+}
+
+pub fn luhn_rejects_single_space_test() -> Nil {
+  card.luhn_valid(digits: " ")
+  |> should.be_false
+}
+
+pub fn luhn_rejects_emoji_test() -> Nil {
+  card.luhn_valid(digits: "🙂🙂🙂🙂")
+  |> should.be_false
+}
+
+pub fn luhn_rejects_mixed_digits_and_spaces_test() -> Nil {
+  card.luhn_valid(digits: "4242 4242 4242 4242")
+  |> should.be_false
+}
+
 // --- Brand detection ----------------------------------------------------
 
 pub fn detect_visa_test() -> Nil {

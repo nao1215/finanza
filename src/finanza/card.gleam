@@ -76,14 +76,31 @@ fn is_pan_char(grapheme: String) -> Bool {
 
 // --- Luhn ---------------------------------------------------------------
 
-/// Apply the Luhn check to a digit string. The caller is responsible
-/// for passing a normalised, all-digit string (use
-/// [`normalize`](#normalize) and check the format first).
+/// Apply the Luhn check to a digit string.
+///
+/// Returns `False` when `digits` is empty or contains any non-digit
+/// character (`"abc"`, `" "`, `"4242 4242 4242 4242"`, etc.). The
+/// caller can still normalise dynamic input through `normalize`, but
+/// passing un-normalised input is no longer a silent bug — the
+/// previous behaviour treated every non-digit as "skip" and returned
+/// `True` for any all-non-digit input because the partial sum
+/// landed on zero.
 pub fn luhn_valid(digits digits: String) -> Bool {
   let chars = string.to_graphemes(digits)
-  case list.is_empty(chars) {
+  case list.is_empty(chars) || !all_digits(chars) {
     True -> False
     False -> luhn_sum(chars) % 10 == 0
+  }
+}
+
+fn all_digits(chars: List(String)) -> Bool {
+  case chars {
+    [] -> True
+    [head, ..rest] ->
+      case digit_value(head) {
+        Ok(_) -> all_digits(rest)
+        Error(Nil) -> False
+      }
   }
 }
 
