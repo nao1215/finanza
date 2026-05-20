@@ -77,10 +77,18 @@ pub fn simple_interest_rejects_negative_principal_test() -> Nil {
   |> should.equal(Error(interest.NegativePrincipal))
 }
 
-pub fn simple_interest_rejects_zero_periods_test() -> Nil {
+pub fn simple_interest_zero_periods_yields_zero_test() -> Nil {
+  let assert Ok(p) = decimal.from_string("1000")
+  let assert Ok(r) = decimal.from_string("0.05")
+  let assert Ok(zero) = decimal.from_string("0.00")
+  interest.simple_interest(principal: p, rate: r, periods: 0, digits: 2)
+  |> should.equal(Ok(zero))
+}
+
+pub fn simple_interest_rejects_negative_periods_test() -> Nil {
   let assert Ok(p) = decimal.from_string("100")
   let assert Ok(r) = decimal.from_string("0.05")
-  interest.simple_interest(principal: p, rate: r, periods: 0, digits: 2)
+  interest.simple_interest(principal: p, rate: r, periods: -1, digits: 2)
   |> should.equal(Error(interest.PeriodsOutOfRange))
 }
 
