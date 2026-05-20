@@ -7,6 +7,8 @@ and this project is expected to follow [Semantic Versioning](https://semver.org/
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-05-20
+
 ### Changed
 
 - `finanza/decimal`: `decimal.new(coefficient, exponent)` now panics with a structured message that names the function, echoes the offending coefficient and exponent, states the safe bound (`±9_007_199_254_740_991`), and points readers at `decimal.try_new` for the `Result`-returning variant. The previous `let assert Ok(d) = try_new(...)` body produced the generic `Pattern match failed, unmatched value: Error(CoefficientTooLarge)` runtime message, which left the caller without a hint about what the safe range was or which alternative constructor to use. (#38)

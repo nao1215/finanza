@@ -1,5 +1,5 @@
 name = "finanza"
-version = "0.6.0"
+version = "0.7.0"
 description = "Decimal arithmetic, currency formatting, time-value-of-money, and payment-card helpers for Gleam."
 licences = ["MIT"]
 repository = { type = "github", user = "nao1215", repo = "finanza" }
