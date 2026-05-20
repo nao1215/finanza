@@ -85,6 +85,13 @@ const max_safe_coefficient: Int = 9_007_199_254_740_991
 // --- Simple interest -----------------------------------------------------
 
 /// Simple interest: `I = P × r × t`.
+///
+/// `periods == 0` is a valid input and returns `0` rescaled to
+/// `digits` — mathematically there is no interest over zero time,
+/// and accepting the trivial case lets callers reuse this function
+/// inside schedule loops without inserting a branch for the
+/// "as-of period 0" row. Negative `periods` is still rejected
+/// with `PeriodsOutOfRange`.
 pub fn simple_interest(
   principal principal: decimal.Decimal,
   rate rate: decimal.Decimal,
@@ -93,16 +100,21 @@ pub fn simple_interest(
 ) -> Result(decimal.Decimal, InterestError) {
   use _ <- result.try(check_principal(principal))
   use _ <- result.try(check_rate(rate))
-  use _ <- result.try(check_periods(periods))
+  use _ <- result.try(check_periods_non_negative(periods))
   use _ <- result.try(check_digits(digits))
-  use pr <- result.try(
-    decimal.multiply(principal, rate) |> result.map_error(ArithmeticError),
-  )
-  use product <- result.try(
-    decimal.multiply(pr, decimal.from_int(n: periods))
-    |> result.map_error(ArithmeticError),
-  )
-  rescale_to_digits(product, digits)
+  case periods {
+    0 -> rescale_to_digits(decimal.zero(), digits)
+    _ -> {
+      use pr <- result.try(
+        decimal.multiply(principal, rate) |> result.map_error(ArithmeticError),
+      )
+      use product <- result.try(
+        decimal.multiply(pr, decimal.from_int(n: periods))
+        |> result.map_error(ArithmeticError),
+      )
+      rescale_to_digits(product, digits)
+    }
+  }
 }
 
 // --- Compound interest ---------------------------------------------------
@@ -460,6 +472,18 @@ fn check_rate(r: decimal.Decimal) -> Result(Nil, InterestError) {
 fn check_periods(p: Int) -> Result(Nil, InterestError) {
   use <- bool.guard(
     when: p <= 0 || p > max_periods,
+    return: Error(PeriodsOutOfRange),
+  )
+  Ok(Nil)
+}
+
+/// Like `check_periods` but accepts `0` (used by `simple_interest`,
+/// where zero periods is a valid input that short-circuits to a
+/// rescaled zero result). Negative periods and overlong runs are
+/// still rejected with `PeriodsOutOfRange`.
+fn check_periods_non_negative(p: Int) -> Result(Nil, InterestError) {
+  use <- bool.guard(
+    when: p < 0 || p > max_periods,
     return: Error(PeriodsOutOfRange),
   )
   Ok(Nil)
