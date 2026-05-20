@@ -201,9 +201,13 @@ pub fn allocate_empty_ratios_errors_test() -> Nil {
   }
 }
 
-pub fn allocate_with_zero_ratio_errors_test() -> Nil {
+pub fn allocate_with_all_zero_ratios_errors_test() -> Nil {
+  // `[1, 0, 1]` was previously rejected as a `NonPositiveRatio`
+  // failure; #49 relaxed that to "skip recipient" semantics. The
+  // boundary now sits at the all-zero list, which still has no
+  // positive total to distribute and remains rejected.
   let m = currency.from_minor(1000, catalog.usd())
-  case currency.allocate(m, [1, 0, 1]) {
+  case currency.allocate(m, [0, 0, 0]) {
     Error(currency.NonPositiveRatio) -> Nil
     other -> should.equal(format_currency(other), "NonPositiveRatio")
   }

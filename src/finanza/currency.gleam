@@ -277,10 +277,20 @@ pub fn equal(a a: Money, b b: Money) -> Bool {
 /// remainders to the first slots so the slices sum back to the
 /// original amount exactly.
 ///
+/// Zero ratios are accepted in a mixed list and mean "skip this
+/// recipient" — `allocate(bill, [1, 0, 1])` distributes the bill
+/// across the first and third slots and assigns zero to the middle
+/// slot, preserving every slot's position in the result. Negative
+/// ratios remain rejected with `NonPositiveRatio`, as does the
+/// all-zero list (which has no positive share to distribute).
+///
 /// ```gleam
 /// let bill = from_minor(units: 1000, currency: catalog.usd())
 /// allocate(bill, [1, 1, 1])
 /// // Ok([$3.34, $3.33, $3.33])
+///
+/// allocate(bill, [1, 0, 1])
+/// // Ok([$5.00, $0.00, $5.00])
 /// ```
 pub fn allocate(
   m m: Money,
@@ -297,7 +307,11 @@ pub fn allocate(
 fn check_ratios(ratios: List(Int)) -> Result(Nil, CurrencyError) {
   use <- bool.guard(when: list.is_empty(ratios), return: Error(EmptyRatios))
   use <- bool.guard(
-    when: list.any(ratios, fn(r) { r <= 0 }),
+    when: list.any(ratios, fn(r) { r < 0 }),
+    return: Error(NonPositiveRatio),
+  )
+  use <- bool.guard(
+    when: list.all(ratios, fn(r) { r == 0 }),
     return: Error(NonPositiveRatio),
   )
   Ok(Nil)
