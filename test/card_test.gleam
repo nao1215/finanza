@@ -381,6 +381,49 @@ pub fn parse_expiry_rejects_three_digit_unseparated_test() -> Nil {
   |> should.equal(Error(card.InvalidExpiry))
 }
 
+pub fn parse_expiry_with_window_inside_window_test() -> Nil {
+  card.parse_expiry_with_window(
+    input: "12/76",
+    today: #(5, 2026),
+    window_years: 50,
+  )
+  |> should.equal(Ok(#(12, 2076)))
+}
+
+pub fn parse_expiry_with_window_outside_window_falls_back_to_19yy_test() -> Nil {
+  card.parse_expiry_with_window(
+    input: "12/76",
+    today: #(5, 2026),
+    window_years: 20,
+  )
+  |> should.equal(Ok(#(12, 1976)))
+}
+
+pub fn parse_expiry_with_window_current_year_test() -> Nil {
+  card.parse_expiry_with_window(
+    input: "12/26",
+    today: #(5, 2026),
+    window_years: 50,
+  )
+  |> should.equal(Ok(#(12, 2026)))
+}
+
+pub fn parse_expiry_with_window_passes_through_four_digit_year_test() -> Nil {
+  card.parse_expiry_with_window(
+    input: "12/2099",
+    today: #(5, 2026),
+    window_years: 20,
+  )
+  |> should.equal(Ok(#(12, 2099)))
+}
+
+pub fn parse_expiry_legacy_always_20yy_test() -> Nil {
+  card.parse_expiry(input: "12/76")
+  |> should.equal(Ok(#(12, 2076)))
+  card.parse_expiry(input: "12/00")
+  |> should.equal(Ok(#(12, 2000)))
+}
+
 // --- Helpers ------------------------------------------------------------
 
 fn list_all(items: List(a), f: fn(a) -> Bool) -> Bool {

@@ -538,6 +538,44 @@ pub fn parse_expiry(input input: String) -> Result(#(Int, Int), ValidationError)
   }
 }
 
+/// Parse a card expiry string using a sliding-window interpretation
+/// for two-digit years. Accepts the same input shapes as
+/// `parse_expiry` (slash, hyphen, dot, unseparated). The difference
+/// is the century rule: a two-digit year `YY` is read as `20YY` if
+/// that interpretation lies within `window_years` of `today`, and as
+/// `19YY` otherwise. Four-digit years pass through unchanged.
+///
+/// `today` is `#(month, year)` with a four-digit year. `window_years`
+/// is the inclusive upper bound on the future side; PCI DSS and
+/// ISO 7813 typically use `50`. Use this entry point when the
+/// expiry might legitimately predate the current century (e.g.
+/// data-archeology use cases) — for routine card capture stay with
+/// `parse_expiry`, which always reads `YY` as `20YY`.
+///
+/// Examples:
+/// - `parse_expiry_with_window(input: "12/26", today: #(5, 2026), window_years: 50)` → `Ok(#(12, 2026))`
+/// - `parse_expiry_with_window(input: "12/76", today: #(5, 2026), window_years: 50)` → `Ok(#(12, 2076))`
+/// - `parse_expiry_with_window(input: "12/76", today: #(5, 2026), window_years: 20)` → `Ok(#(12, 1976))`
+pub fn parse_expiry_with_window(
+  input input: String,
+  today today: #(Int, Int),
+  window_years window_years: Int,
+) -> Result(#(Int, Int), ValidationError) {
+  let trimmed = string.trim(input)
+  case extract_month_year(trimmed) {
+    Ok(#(month_str, year_str)) -> {
+      use month <- result.try(parse_month(month_str))
+      use year <- result.map(parse_year_windowed(
+        s: year_str,
+        today: today,
+        window_years: window_years,
+      ))
+      #(month, year)
+    }
+    Error(Nil) -> Error(InvalidExpiry)
+  }
+}
+
 /// Split a trimmed expiry input into its `MM` and `YY`/`YYYY` parts,
 /// trying the separator shapes first and then the unseparated
 /// `MMYY` / `MMYYYY` forms. Returns the raw substrings; the caller
@@ -595,5 +633,43 @@ fn parse_year(s: String) -> Result(Int, ValidationError) {
     Ok(y) if length == 4 -> Ok(y)
     Ok(y) -> Ok(2000 + y)
     Error(Nil) -> Error(InvalidExpiry)
+  }
+}
+
+/// Like `parse_year` but applies a sliding-window century rule to
+/// two-digit years. Four-digit years pass through unchanged.
+fn parse_year_windowed(
+  s s: String,
+  today today: #(Int, Int),
+  window_years window_years: Int,
+) -> Result(Int, ValidationError) {
+  let trimmed = string.trim(s)
+  let length = string.length(trimmed)
+  use <- bool.guard(
+    when: length != 2 && length != 4,
+    return: Error(InvalidExpiry),
+  )
+  case int.parse(trimmed) {
+    Ok(y) if y < 0 -> Error(InvalidExpiry)
+    Ok(y) if length == 4 -> Ok(y)
+    Ok(y) -> Ok(window_century(yy: y, today: today, window: window_years))
+    Error(Nil) -> Error(InvalidExpiry)
+  }
+}
+
+/// Decide between `20YY` and `19YY` for a two-digit `yy` using a
+/// sliding window anchored at `today`. The `20YY` interpretation is
+/// preferred whenever it does not exceed `today_year + window`; once
+/// it does, the year is read as `19YY`.
+fn window_century(
+  yy yy: Int,
+  today today: #(Int, Int),
+  window window: Int,
+) -> Int {
+  let #(_today_month, today_year) = today
+  let candidate_20 = 2000 + yy
+  case candidate_20 <= today_year + window {
+    True -> candidate_20
+    False -> 1900 + yy
   }
 }
