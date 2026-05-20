@@ -43,6 +43,41 @@ pub fn from_float_negative_test() -> Nil {
   |> should.be_true
 }
 
+pub fn from_string_accepts_lowercase_e_test() -> Nil {
+  let assert Ok(d) = decimal.from_string("1e10")
+  decimal.to_string(d) |> should.equal("10000000000")
+}
+
+pub fn from_string_accepts_uppercase_e_test() -> Nil {
+  let assert Ok(d) = decimal.from_string("1E10")
+  decimal.to_string(d) |> should.equal("10000000000")
+}
+
+pub fn from_string_accepts_positive_exponent_test() -> Nil {
+  let assert Ok(d) = decimal.from_string("1.5e+2")
+  decimal.to_string(d) |> should.equal("150")
+}
+
+pub fn from_string_accepts_negative_exponent_test() -> Nil {
+  let assert Ok(d) = decimal.from_string("1e-10")
+  decimal.to_string(d) |> should.equal("0.0000000001")
+}
+
+pub fn from_string_accepts_fractional_with_exponent_test() -> Nil {
+  let assert Ok(d) = decimal.from_string("3.14e2")
+  decimal.to_string(d) |> should.equal("314")
+}
+
+pub fn from_string_rejects_empty_exponent_test() -> Nil {
+  decimal.from_string("1e")
+  |> should.equal(Error(decimal.InvalidCharacter(char: "e", position: 1)))
+}
+
+pub fn from_string_rejects_garbage_exponent_test() -> Nil {
+  decimal.from_string("1eXYZ")
+  |> should.equal(Error(decimal.InvalidCharacter(char: "e", position: 1)))
+}
+
 pub fn new_explicit_test() -> Nil {
   let value = decimal.new(coefficient: 12_345, exponent: -2)
   decimal.coefficient(value)
