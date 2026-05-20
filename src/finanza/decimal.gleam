@@ -221,19 +221,93 @@ fn rendered_fits(abs abs: Int, zeros_remaining zeros_remaining: Int) -> Bool {
 
 /// Parse a decimal from a string. Accepts an optional leading `+` or
 /// `-`, decimal digits, and at most one `.` separator. Scientific
-/// notation is not supported.
+/// notation (`1e10`, `1.5E+2`, `1e-10`) is also accepted: the mantissa
+/// is parsed by the same rules and the trailing `[eE][+-]?digits`
+/// shifts the resulting `Decimal`'s exponent. This matches
+/// `dataprep/parse.float`'s convention so values produced by `Float`
+/// → `String` round-trips on either target flow into `decimal`
+/// without an intermediate `string.replace` step.
 ///
 /// ```gleam
 /// from_string("3.14")    // Ok(Decimal with coefficient=314, exponent=-2)
 /// from_string("-0.5")    // Ok(Decimal with coefficient=-5, exponent=-1)
+/// from_string("1e10")    // Ok(Decimal with coefficient=1, exponent=10)
+/// from_string("1.5e+2")  // Ok(Decimal with coefficient=15, exponent=1)
+/// from_string("1e-10")   // Ok(Decimal with coefficient=1, exponent=-10)
 /// from_string("")        // Error(EmptyInput)
 /// from_string("1.2.3")   // Error(MultipleDecimalPoints)
 /// ```
 pub fn from_string(input input: String) -> Result(Decimal, ParseError) {
   let trimmed = string.trim(input)
   use <- bool.guard(when: trimmed == "", return: Error(EmptyInput))
+  case split_scientific_notation(trimmed) {
+    Ok(#(mantissa, exponent_shift)) -> {
+      use base <- result.try(parse_plain_decimal(mantissa))
+      shift_exponent(base, exponent_shift)
+    }
+    Error(parse_error) -> Error(parse_error)
+  }
+}
+
+/// Split a trimmed input on the first scientific-notation marker
+/// (`e` or `E`). Returns `#(mantissa, exponent_shift)` where
+/// `exponent_shift` is `0` when no marker is present. Returns
+/// `Error` for malformed exponent parts (empty, non-numeric,
+/// stray sign without digits).
+fn split_scientific_notation(
+  trimmed: String,
+) -> Result(#(String, Int), ParseError) {
+  case find_exponent_marker(trimmed) {
+    Error(Nil) -> Ok(#(trimmed, 0))
+    Ok(#(mantissa, marker, exponent_str, marker_position)) ->
+      case
+        parse_exponent_part(
+          exponent_str: exponent_str,
+          start_position: marker_position + 1,
+          marker: marker,
+        )
+      {
+        Ok(shift) -> Ok(#(mantissa, shift))
+        Error(parse_error) -> Error(parse_error)
+      }
+  }
+}
+
+fn find_exponent_marker(
+  trimmed: String,
+) -> Result(#(String, String, String, Int), Nil) {
+  case string.split_once(trimmed, on: "e") {
+    Ok(#(mantissa, exponent_str)) ->
+      Ok(#(mantissa, "e", exponent_str, string.length(mantissa)))
+    Error(Nil) ->
+      case string.split_once(trimmed, on: "E") {
+        Ok(#(mantissa, exponent_str)) ->
+          Ok(#(mantissa, "E", exponent_str, string.length(mantissa)))
+        Error(Nil) -> Error(Nil)
+      }
+  }
+}
+
+fn parse_exponent_part(
+  exponent_str exponent_str: String,
+  start_position start_position: Int,
+  marker marker: String,
+) -> Result(Int, ParseError) {
+  case exponent_str {
+    "" -> Error(InvalidCharacter(char: marker, position: start_position - 1))
+    _ ->
+      case int.parse(exponent_str) {
+        Ok(n) -> Ok(n)
+        Error(Nil) ->
+          Error(InvalidCharacter(char: marker, position: start_position - 1))
+      }
+  }
+}
+
+fn parse_plain_decimal(mantissa: String) -> Result(Decimal, ParseError) {
+  use <- bool.guard(when: mantissa == "", return: Error(EmptyInput))
   parse_loop(state: ParseState(
-    chars: string.to_graphemes(trimmed),
+    chars: string.to_graphemes(mantissa),
     position: 0,
     sign: 1,
     digits: 0,
@@ -242,6 +316,14 @@ pub fn from_string(input input: String) -> Result(Decimal, ParseError) {
     saw_sign: False,
     saw_digit: False,
   ))
+}
+
+fn shift_exponent(base: Decimal, shift: Int) -> Result(Decimal, ParseError) {
+  let new_exponent = base.exponent + shift
+  case try_new(coefficient: base.coefficient, exponent: new_exponent) {
+    Ok(d) -> Ok(d)
+    Error(CoefficientTooLarge) -> Error(ParsedValueTooLarge)
+  }
 }
 
 type ParseState {
