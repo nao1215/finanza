@@ -7,6 +7,10 @@ and this project is expected to follow [Semantic Versioning](https://semver.org/
 
 ## [Unreleased]
 
+### Fixed
+
+- `finanza/interest`: `interest.compound_interest(principal, annual_rate, years: 0, compounds_per_year, digits)` now returns the `principal` rescaled to `digits` instead of zero. By the function's own docstring formula `FV = principal × (1 + annual_rate / compounds_per_year)^(compounds_per_year × years)`, the zero-years case reduces to `principal × 1 = principal`. The previous behaviour returned zero, diverging from the family-wide zero-periods handling in `future_value`, `present_value`, `payment`, and `simple_interest` introduced in #44, and forced callers writing schedule loops to insert an explicit `years == 0` branch. (#69)
+
 ## [0.7.0] - 2026-05-20
 
 ### Changed
