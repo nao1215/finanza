@@ -7,6 +7,8 @@ and this project is expected to follow [Semantic Versioning](https://semver.org/
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-05-22
+
 ### Added
 
 - `finanza/currency`: `currency.sum(items: List(Money)) -> Result(Money, CurrencyError)` and `currency.sum_with_zero(items, fallback) -> Result(Money, CurrencyError)` — convenience reducers for totalling line items, projecting event-sourced balances, and computing per-batch subtotals without the per-call-site `list.fold + nested case + propagate CurrencyError` boilerplate that callers used to copy-paste (and that frequently swallowed `CurrencyMismatch` in the `Error(_) -> acc` branch). `sum` returns `Error(EmptyList)` for `[]` because the result has no well-defined currency in that case; `sum_with_zero` takes the empty-case currency as the `fallback` argument and is the right entry point when "no activity" is a meaningful zero in a known currency. Both surface `Error(CurrencyMismatch(..))` at the first divergence so `Result` propagates naturally through `use … <- result.try`. A new `EmptyList` variant is added to `CurrencyError`. (#68)
