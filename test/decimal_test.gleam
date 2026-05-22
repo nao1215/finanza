@@ -1,5 +1,6 @@
 import gleam/list
 import gleam/order
+import gleam/string
 import gleeunit/should
 
 import finanza/decimal
@@ -224,6 +225,45 @@ pub fn try_new_rejects_overlarge_rendered_value_test() -> Nil {
   |> should.equal(Error(decimal.CoefficientTooLarge))
   decimal.try_new(coefficient: 1, exponent: 16)
   |> should.equal(Error(decimal.CoefficientTooLarge))
+}
+
+// Issue #67: the panic message from `decimal.new` used to always
+// claim `|coefficient| > 9007199254740991`, even on the
+// rendered-overflow path where `|coefficient|` was demonstrably tiny
+// (e.g. `new(1, 19)`). The message now distinguishes the two paths.
+// The panic itself can't be asserted directly with gleeunit; the
+// `new_overflow_message/2` helper is exposed `@internal` precisely so
+// the message construction is covered.
+pub fn new_overflow_message_rendered_path_omits_coefficient_claim_test() -> Nil {
+  let msg = decimal.new_overflow_message(coefficient: 1, exponent: 19)
+  string.contains(msg, "|coefficient| > 9007199254740991")
+  |> should.be_false
+}
+
+pub fn new_overflow_message_rendered_path_names_rendered_value_test() -> Nil {
+  let msg = decimal.new_overflow_message(coefficient: 1, exponent: 19)
+  string.contains(msg, "rendered value") |> should.be_true
+  string.contains(msg, "10^19") |> should.be_true
+}
+
+@target(erlang)
+pub fn new_overflow_message_coefficient_path_unchanged_test() -> Nil {
+  let msg =
+    decimal.new_overflow_message(
+      coefficient: 9_007_199_254_740_992,
+      exponent: 0,
+    )
+  string.contains(msg, "|coefficient| > 9007199254740991")
+  |> should.be_true
+  string.contains(msg, "rendered value") |> should.be_false
+}
+
+pub fn new_overflow_message_negative_coefficient_uses_absolute_value_test() -> Nil {
+  // -1 × 10^19 also overflows the rendered range — the message should
+  // talk about the rendered path and report the absolute value.
+  let msg = decimal.new_overflow_message(coefficient: -1, exponent: 19)
+  string.contains(msg, "rendered value") |> should.be_true
+  string.contains(msg, "1 × 10^19") |> should.be_true
 }
 
 pub fn try_new_accepts_boundary_values_test() -> Nil {

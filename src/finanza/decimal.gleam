@@ -191,26 +191,59 @@ pub fn from_float(value value: Float) -> Result(Decimal, ParseError) {
 ///
 /// `new(coefficient: 1234, exponent: -2)` represents `12.34`.
 ///
-/// Panics if the implied rendered value exceeds the safe range
-/// (`|coefficient| > 9_007_199_254_740_991`, or — for non-negative
-/// `exponent` — `|coefficient| × 10^exponent > 9_007_199_254_740_991`).
+/// Panics on either of the two overflow paths:
+///
+/// - `|coefficient| > 9_007_199_254_740_991` — the coefficient
+///   itself exceeds the JS-safe integer ceiling.
+/// - `exponent > 0` and `|coefficient| × 10^exponent > 9_007_199_254_740_991`
+///   — the coefficient is safe but the implied rendered value
+///   (the integer that `to_string` would emit) is not.
+///
+/// The panic message distinguishes the two paths so a debugging
+/// caller can tell whether to shrink the coefficient or shrink the
+/// exponent.
+///
 /// Use [`try_new`](#try_new) when the inputs are supplied by a
 /// caller and might exceed the safe range — that variant returns
 /// a `Result` instead of panicking.
 pub fn new(coefficient coefficient: Int, exponent exponent: Int) -> Decimal {
   case try_new(coefficient: coefficient, exponent: exponent) {
     Ok(d) -> d
-    Error(CoefficientTooLarge) -> {
-      let msg =
-        "finanza/decimal.new: coefficient "
-        <> int.to_string(coefficient)
-        <> " (exponent "
-        <> int.to_string(exponent)
-        <> ") would overflow the JS-safe range (|coefficient| > "
-        <> int.to_string(max_safe_coefficient)
-        <> "); use decimal.try_new for inputs that might exceed this bound"
-      panic as msg
-    }
+    Error(CoefficientTooLarge) ->
+      panic as new_overflow_message(coefficient:, exponent:)
+  }
+}
+
+/// Build the panic message for `new` when `try_new` returns
+/// `CoefficientTooLarge`. Re-examines the inputs to distinguish
+/// the two overflow paths so the message points the caller at the
+/// right thing to shrink (coefficient vs exponent).
+///
+/// Exposed as `@internal` for the test suite; not part of the
+/// public API.
+@internal
+pub fn new_overflow_message(
+  coefficient coefficient: Int,
+  exponent exponent: Int,
+) -> String {
+  let abs = int.absolute_value(coefficient)
+  case abs > max_safe_coefficient {
+    True ->
+      "finanza/decimal.new: coefficient "
+      <> int.to_string(coefficient)
+      <> " (exponent "
+      <> int.to_string(exponent)
+      <> ") exceeds the JS-safe range (|coefficient| > "
+      <> int.to_string(max_safe_coefficient)
+      <> "); use decimal.try_new for inputs that might exceed this bound"
+    False ->
+      "finanza/decimal.new: rendered value |coefficient| × 10^exponent (= "
+      <> int.to_string(abs)
+      <> " × 10^"
+      <> int.to_string(exponent)
+      <> ") exceeds the JS-safe range (> "
+      <> int.to_string(max_safe_coefficient)
+      <> "); use decimal.try_new for inputs that might exceed this bound"
   }
 }
 
