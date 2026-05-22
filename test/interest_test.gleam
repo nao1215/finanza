@@ -108,7 +108,11 @@ pub fn present_value_zero_periods_returns_future_test() -> Nil {
   |> should.equal(Ok(expected))
 }
 
-pub fn compound_interest_zero_years_returns_zero_test() -> Nil {
+// Issue #69: `compound_interest(years=0)` used to return zero; the
+// correct value is `principal × 1^0 = principal`, matching the
+// zero-periods handling in `future_value`, `present_value`, `payment`,
+// and `simple_interest`.
+pub fn compound_interest_zero_years_returns_principal_test() -> Nil {
   let assert Ok(p) = decimal.from_string("1000")
   let assert Ok(r) = decimal.from_string("0.05")
   let assert Ok(result) =
@@ -116,10 +120,42 @@ pub fn compound_interest_zero_years_returns_zero_test() -> Nil {
       principal: p,
       annual_rate: r,
       years: 0,
-      compounds_per_year: 1,
-      digits: 2,
+      compounds_per_year: 12,
+      digits: 6,
     )
-  decimal.is_zero(result) |> should.be_true
+  decimal.equal(result, p) |> should.be_true
+}
+
+pub fn compound_interest_zero_years_annual_returns_principal_test() -> Nil {
+  let assert Ok(p) = decimal.from_string("1000")
+  let assert Ok(r) = decimal.from_string("0.10")
+  let assert Ok(result) =
+    interest.compound_interest(
+      principal: p,
+      annual_rate: r,
+      years: 0,
+      compounds_per_year: 1,
+      digits: 6,
+    )
+  decimal.equal(result, p) |> should.be_true
+}
+
+// Zero years must agree with future_value at periods=0 — both reduce
+// to the input value rescaled to `digits`.
+pub fn compound_interest_zero_years_matches_future_value_test() -> Nil {
+  let assert Ok(p) = decimal.from_string("1000")
+  let assert Ok(r) = decimal.from_string("0.05")
+  let assert Ok(via_compound) =
+    interest.compound_interest(
+      principal: p,
+      annual_rate: r,
+      years: 0,
+      compounds_per_year: 1,
+      digits: 6,
+    )
+  let assert Ok(via_fv) =
+    interest.future_value(present: p, rate_per_period: r, periods: 0, digits: 6)
+  decimal.equal(via_compound, via_fv) |> should.be_true
 }
 
 pub fn future_value_rejects_negative_periods_test() -> Nil {

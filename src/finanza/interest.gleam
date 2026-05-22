@@ -138,6 +138,13 @@ pub fn simple_interest(
 /// ```text
 /// FV = principal × (1 + annual_rate / compounds_per_year)^(compounds_per_year × years)
 /// ```
+///
+/// `years == 0` is a valid input and returns `principal` rescaled to
+/// `digits` — the formula reduces to `principal × 1` when the exponent
+/// is zero, and accepting the trivial case lets callers reuse this
+/// function inside schedule loops without inserting a branch for the
+/// "as-of year 0" row. Aligns with the zero-periods handling in
+/// `future_value`, `present_value`, `payment`, and `simple_interest`.
 pub fn compound_interest(
   principal principal: decimal.Decimal,
   annual_rate annual_rate: decimal.Decimal,
@@ -152,7 +159,7 @@ pub fn compound_interest(
   use _ <- result.try(check_digits(digits))
   use <- bool.guard(
     when: years == 0,
-    return: rescale_to_digits(decimal.zero(), digits),
+    return: rescale_to_digits(principal, digits),
   )
   let total_periods = years * compounds_per_year
   use _ <- result.try(check_periods(total_periods))
