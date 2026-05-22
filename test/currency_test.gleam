@@ -162,6 +162,65 @@ pub fn subtract_test() -> Nil {
   |> should.equal(750)
 }
 
+// --- Sum -----------------------------------------------------------------
+
+// Issue #68: sum a list of Money values without the per-call-site
+// `list.fold + nested case + propagate CurrencyError` boilerplate.
+
+pub fn sum_empty_list_returns_error_test() -> Nil {
+  currency.sum(items: [])
+  |> should.equal(Error(currency.EmptyList))
+}
+
+pub fn sum_single_currency_test() -> Nil {
+  let usd = catalog.usd()
+  let items = [
+    currency.from_minor(units: 100, currency: usd),
+    currency.from_minor(units: 250, currency: usd),
+  ]
+  let assert Ok(total) = currency.sum(items: items)
+  let assert Ok(units) = currency.to_minor(m: total, mode: rounding.HalfEven)
+  units |> should.equal(350)
+}
+
+pub fn sum_singleton_returns_only_element_test() -> Nil {
+  let item = currency.from_minor(units: 4242, currency: catalog.usd())
+  let assert Ok(total) = currency.sum(items: [item])
+  currency.equal(total, item) |> should.be_true
+}
+
+pub fn sum_currency_mismatch_returns_error_test() -> Nil {
+  let usd = currency.from_minor(units: 100, currency: catalog.usd())
+  let eur = currency.from_minor(units: 50, currency: catalog.eur())
+  currency.sum(items: [usd, eur])
+  |> should.equal(Error(currency.CurrencyMismatch(left: "USD", right: "EUR")))
+}
+
+pub fn sum_with_zero_empty_returns_fallback_test() -> Nil {
+  let zero = currency.from_minor(units: 0, currency: catalog.usd())
+  let assert Ok(total) = currency.sum_with_zero(items: [], fallback: zero)
+  currency.equal(total, zero) |> should.be_true
+}
+
+pub fn sum_with_zero_non_empty_test() -> Nil {
+  let zero = currency.from_minor(units: 0, currency: catalog.usd())
+  let items = [
+    currency.from_minor(units: 100, currency: catalog.usd()),
+    currency.from_minor(units: 200, currency: catalog.usd()),
+    currency.from_minor(units: 50, currency: catalog.usd()),
+  ]
+  let assert Ok(total) = currency.sum_with_zero(items: items, fallback: zero)
+  let assert Ok(units) = currency.to_minor(m: total, mode: rounding.HalfEven)
+  units |> should.equal(350)
+}
+
+pub fn sum_with_zero_currency_mismatch_against_fallback_test() -> Nil {
+  let zero = currency.from_minor(units: 0, currency: catalog.usd())
+  let eur = currency.from_minor(units: 50, currency: catalog.eur())
+  currency.sum_with_zero(items: [eur], fallback: zero)
+  |> should.equal(Error(currency.CurrencyMismatch(left: "USD", right: "EUR")))
+}
+
 pub fn multiply_test() -> Nil {
   let m = currency.from_minor(units: 1000, currency: catalog.usd())
   let factor = decimal.from_int(n: 3)

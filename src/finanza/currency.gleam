@@ -45,6 +45,11 @@ pub type CurrencyError {
   /// [`allocate`](#allocate) received a ratio that was zero or
   /// negative.
   NonPositiveRatio
+  /// [`sum`](#sum) was called with an empty list. The total has no
+  /// well-defined currency in that case. Use
+  /// [`sum_with_zero`](#sum_with_zero) when the empty input should
+  /// fold to zero in a known currency.
+  EmptyList
   /// A decimal operation overflowed the supported precision window.
   /// Inspect `error` for the underlying decimal error.
   ArithmeticError(error: decimal.ArithmeticError)
@@ -205,6 +210,43 @@ pub fn subtract(a a: Money, b b: Money) -> Result(Money, CurrencyError) {
     decimal.subtract(a.amount, b.amount) |> result.map_error(ArithmeticError),
   )
   Money(amount: diff, currency: a.currency)
+}
+
+/// Sum a non-empty list of `Money` values, all of which must share
+/// the same currency.
+///
+/// Removes the per-call-site `list.fold + nested case + propagate
+/// CurrencyError` boilerplate that totalling line items, projecting
+/// event-sourced balances, and computing batch subtotals all require
+/// today.
+///
+/// Empty input has no well-defined currency, so returns
+/// `Error(EmptyList)`. Use [`sum_with_zero`](#sum_with_zero) when an
+/// empty list should fold to zero in a caller-supplied currency.
+/// Mixed-currency input returns `Error(CurrencyMismatch(..))` at the
+/// first divergence.
+pub fn sum(items items: List(Money)) -> Result(Money, CurrencyError) {
+  case items {
+    [] -> Error(EmptyList)
+    [head, ..rest] ->
+      list.try_fold(rest, head, fn(acc, m) { add(a: acc, b: m) })
+  }
+}
+
+/// Sum a list of `Money` values, falling back to `fallback` when the
+/// list is empty. `fallback`'s currency is also the expected currency
+/// for every element; the first divergence returns
+/// `Error(CurrencyMismatch(..))`.
+///
+/// Use this entry point when the empty case is a meaningful "no
+/// activity" outcome in a known currency — e.g. summing a customer's
+/// daily transactions, where an empty day means `from_minor(0,
+/// account_currency)` rather than an error.
+pub fn sum_with_zero(
+  items items: List(Money),
+  fallback fallback: Money,
+) -> Result(Money, CurrencyError) {
+  list.try_fold(items, fallback, fn(acc, m) { add(a: acc, b: m) })
 }
 
 /// Multiply a money value by a scalar.

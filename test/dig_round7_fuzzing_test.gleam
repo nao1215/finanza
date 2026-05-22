@@ -410,6 +410,7 @@ pub fn fuzz_new_currency_test() -> Nil {
       Error(currency.InvalidCurrencyCode) -> p4
       Error(currency.EmptyRatios) -> p4
       Error(currency.NonPositiveRatio) -> p4
+      Error(currency.EmptyList) -> p4
       Error(currency.CurrencyMismatch(_, _)) -> p4
       Error(currency.ArithmeticError(_)) -> p4
     }
@@ -444,6 +445,7 @@ pub fn fuzz_currency_allocate_test() -> Nil {
       Ok(_) -> p2
       Error(currency.EmptyRatios) -> p2
       Error(currency.NonPositiveRatio) -> p2
+      Error(currency.EmptyList) -> p2
       Error(currency.InvalidExponent) -> p2
       Error(currency.InvalidCurrencyCode) -> p2
       Error(currency.CurrencyMismatch(_, _)) -> p2
@@ -466,6 +468,7 @@ pub fn fuzz_from_minor_to_minor_test() -> Nil {
       Ok(_) -> p1
       Error(currency.EmptyRatios) -> p1
       Error(currency.NonPositiveRatio) -> p1
+      Error(currency.EmptyList) -> p1
       Error(currency.InvalidExponent) -> p1
       Error(currency.InvalidCurrencyCode) -> p1
       Error(currency.CurrencyMismatch(_, _)) -> p1

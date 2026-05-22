@@ -90,6 +90,25 @@ pub fn invoice_label_de() -> String {
 // invoice_label_de() == "1.234,56€"
 ```
 
+```gleam
+import gleam/result
+import finanza/currency
+import finanza/currency/catalog
+import finanza/decimal/rounding
+
+pub fn invoice_total() -> Result(Int, currency.CurrencyError) {
+  let usd = catalog.usd()
+  let line_items = [
+    currency.from_minor(12_000, usd),
+    currency.from_minor(4_500, usd),
+    currency.from_minor(99, usd),
+  ]
+  use total <- result.try(currency.sum(line_items))
+  currency.to_minor(total, rounding.HalfEven)
+}
+// invoice_total() == Ok(16_599)
+```
+
 ## Interest
 
 ```gleam
