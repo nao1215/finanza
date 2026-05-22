@@ -7,6 +7,10 @@ and this project is expected to follow [Semantic Versioning](https://semver.org/
 
 ## [Unreleased]
 
+### Added
+
+- `finanza/currency`: `currency.sum(items: List(Money)) -> Result(Money, CurrencyError)` and `currency.sum_with_zero(items, fallback) -> Result(Money, CurrencyError)` — convenience reducers for totalling line items, projecting event-sourced balances, and computing per-batch subtotals without the per-call-site `list.fold + nested case + propagate CurrencyError` boilerplate that callers used to copy-paste (and that frequently swallowed `CurrencyMismatch` in the `Error(_) -> acc` branch). `sum` returns `Error(EmptyList)` for `[]` because the result has no well-defined currency in that case; `sum_with_zero` takes the empty-case currency as the `fallback` argument and is the right entry point when "no activity" is a meaningful zero in a known currency. Both surface `Error(CurrencyMismatch(..))` at the first divergence so `Result` propagates naturally through `use … <- result.try`. A new `EmptyList` variant is added to `CurrencyError`. (#68)
+
 ### Changed
 
 - `finanza/decimal`: the panic message from `decimal.new(coefficient, exponent)` now distinguishes the two overflow paths it inherits from `try_new`. Previously the message always claimed `|coefficient| > 9_007_199_254_740_991`, which is plainly false on the rendered-overflow path (e.g. `decimal.new(1, 19)` reported the coefficient `1` as too large). The message now reads `coefficient … exceeds the JS-safe range (|coefficient| > 9_007_199_254_740_991)` only when that is actually true, and otherwise reads `rendered value |coefficient| × 10^exponent (= … × 10^…) exceeds the JS-safe range (> 9_007_199_254_740_991)`, naming the exponent and the absolute coefficient explicitly so debugging callers can tell which input to shrink. The docstring on `new` is updated to spell out both panic conditions. (#67)

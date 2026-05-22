@@ -317,6 +317,7 @@ fn format_currency(r: Result(a, currency.CurrencyError)) -> String {
     Error(currency.InvalidCurrencyCode) -> "InvalidCurrencyCode"
     Error(currency.EmptyRatios) -> "EmptyRatios"
     Error(currency.NonPositiveRatio) -> "NonPositiveRatio"
+    Error(currency.EmptyList) -> "EmptyList"
     Error(currency.ArithmeticError(decimal.DivisionByZero)) ->
       "ArithmeticError DivisionByZero"
     Error(currency.ArithmeticError(decimal.PrecisionExceeded)) ->
