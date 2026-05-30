@@ -7,6 +7,8 @@ and this project is expected to follow [Semantic Versioning](https://semver.org/
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-05-30
+
 ### Changed
 
 - `finanza/decimal`: `decimal.from_string` now trims leading and trailing **Unicode** whitespace, not only ASCII. NO-BREAK SPACE (U+00A0), NARROW NO-BREAK SPACE (U+202F), IDEOGRAPHIC SPACE (U+3000), the en/em-space family (U+2000–U+200A), the line / paragraph separators (U+2028 / U+2029), and the BOM (U+FEFF) are now stripped at both ends, matching the Unicode `White_Space` property. Previously only ASCII space / tab / newline were trimmed, so values copied from web pages, locale currency formatting, or CSV / Excel exports were rejected with a confusing `InvalidCharacter` that rendered the offending codepoint as a plain space. Whitespace *between* digits is still rejected (trimming is at the ends only), so `"1\u{00a0}5"` and `"1 . 5"` continue to fail. The contract is now spelled out in the `from_string` doc-comment. (#74)
