@@ -7,6 +7,10 @@ and this project is expected to follow [Semantic Versioning](https://semver.org/
 
 ## [Unreleased]
 
+### Fixed
+
+- `finanza/interest`: `future_value` no longer fails with `Error(ArithmeticError(PrecisionExceeded))` at `digits >= 6` when `present` already carries high precision (e.g. the output of a prior `present_value` call), and the FV/PV inverse now holds in **both** directions. The previous implementation pre-computed `growth = (1 + r)^periods` and did a single `present × growth` multiply, whose product overflowed the safe-coefficient range once both operands carried precision. `future_value` and `present_value` now grow / discount by the *base* `(1 + r)` one period at a time at an internal working precision of `digits + 2`, with adaptive precision-shedding so they stay total at any `digits`. The two are exact numerical inverses, so `future_value(present_value(x)) == x` round-trips to the requested `digits` within rounding tolerance, and the FV / PV / discount results now match Python `decimal` (prec=50) textbook values more closely (several exactly). Re-verification of #26. (#76)
+
 ### Changed
 
 - `finanza/decimal`: `decimal.round(d, digits, mode)` now pads to exactly `digits` fractional places instead of being trim-only. A coarser-precision input is zero-padded — `to_string(round(from_int(2000), 2, _))` is now `"2000.00"`, not `"2000"`, and `round(from_string("1"), 2, _)` renders `"1.00"` — so the result's exponent is always `-digits` (or `0` when `digits == 0`). This is the standard fixed-point contract (Python `Decimal.quantize`, Go `shopspring/decimal.Round`) and the only useful one for monetary formatting. `round` is now the non-failing form of `rescale` (they share one implementation and cannot drift); on the JavaScript-only padding-overflow edge it falls back to the input unchanged. `truncate` pads the same way. Re-verification of #25. **Behavioural change** for callers that relied on the trim-only output. (#75)

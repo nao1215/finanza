@@ -90,6 +90,19 @@ const max_periods: Int = 1200
 /// while still giving textbook-cent accuracy at `digits = 2`.
 const max_work_digits: Int = 7
 
+/// Internal working precision for the iterative `future_value` /
+/// `present_value` growth and discount loops. Two guard digits beyond
+/// the caller's requested `digits` keep the FV/PV inverse exact at the
+/// requested precision; `max_work_digits` is the floor so low-`digits`
+/// callers still benefit from textbook-cent accuracy. The per-step
+/// adaptive overflow guard in `pow_loop` / `decimal.divide` clamps the
+/// effective precision back down if a very high `digits` would push an
+/// intermediate past `max_safe_coefficient`, so this can be requested
+/// freely without risking a `PrecisionExceeded`.
+fn work_digits_for(digits digits: Int) -> Int {
+  int.max(max_work_digits, digits + 2)
+}
+
 /// Upper bound on a `Decimal` coefficient that `finanza/decimal`
 /// will accept (2^53 − 1, the IEEE-754 double safe-integer ceiling).
 /// Mirrors the value enforced inside `finanza/decimal`; kept here
@@ -188,8 +201,12 @@ pub fn compound_interest(
 
 /// Future value of `present` after `periods` periods at `rate_per_period`.
 ///
-/// See the module-level **Precision** section for the
-/// 7-working-digit target and the adaptive overflow guard.
+/// Grows `present` by the base `(1 + rate_per_period)` one period at a
+/// time at an internal working precision of `digits + 2` (floored at the
+/// module's working-digit target). The `present_value` inverse runs the
+/// same iteration in reverse, so `future_value(present_value(x)) == x`
+/// round-trips to the requested `digits` within rounding tolerance. See
+/// the module-level **Precision** section for the adaptive overflow guard.
 pub fn future_value(
   present present: decimal.Decimal,
   rate_per_period rate_per_period: decimal.Decimal,
@@ -203,23 +220,41 @@ pub fn future_value(
     when: periods == 0,
     return: rescale_to_digits(present, digits),
   )
-  let work_digits = max_work_digits
-  use growth <- result.try(growth_factor(
-    rate: rate_per_period,
-    periods: periods,
+  let work_digits = work_digits_for(digits: digits)
+  // Issue #76 (re-verification of #26): the previous implementation
+  // pre-computed `growth = (1 + r)^periods` and did a single
+  // `present × growth` multiply. At `digits >= 6` that multiply
+  // overflowed `max_safe_coefficient` whenever `present` already carried
+  // high precision (e.g. the output of `present_value` at the same
+  // `digits`), and guarding it by rounding `present` down shed so much
+  // precision that the FV/PV inverse no longer held. Instead, grow
+  // `present` by the *base* `(1 + r)` one period at a time via the same
+  // adaptive `pow_loop` the growth factor uses: the base has a small
+  // coefficient, so each step stays well inside the safe range and the
+  // running value never accumulates the giant `growth` coefficient.
+  // This keeps the inverse property exact in both directions.
+  use base <- result.try(
+    decimal.add(decimal.one(), rate_per_period)
+    |> result.map_error(ArithmeticError),
+  )
+  use grown <- result.try(pow_loop(
+    base: base,
+    exponent: periods,
+    acc: present,
     digits: work_digits,
   ))
-  use product <- result.try(
-    decimal.multiply(present, growth) |> result.map_error(ArithmeticError),
-  )
-  rescale_to_digits(product, digits)
+  rescale_to_digits(grown, digits)
 }
 
 /// Present value of `future` discounted at `rate_per_period` for
 /// `periods` periods.
 ///
-/// See the module-level **Precision** section for the
-/// 7-working-digit target and the adaptive overflow guard.
+/// Discounts `future` by the base `(1 + rate_per_period)` one period at a
+/// time at an internal working precision of `digits + 2` (floored at the
+/// module's working-digit target) — the exact inverse of `future_value`,
+/// so the FV/PV round-trip holds to the requested `digits` within rounding
+/// tolerance. See the module-level **Precision** section for the adaptive
+/// overflow guard.
 pub fn present_value(
   future future: decimal.Decimal,
   rate_per_period rate_per_period: decimal.Decimal,
@@ -233,43 +268,27 @@ pub fn present_value(
     when: periods == 0,
     return: rescale_to_digits(future, digits),
   )
-  let work_digits = max_work_digits
-  use growth <- result.try(growth_factor(
-    rate: rate_per_period,
-    periods: periods,
+  let work_digits = work_digits_for(digits: digits)
+  // Issue #76 (re-verification of #26): discount `future` by the *base*
+  // `(1 + r)` one period at a time, the exact inverse of the iterative
+  // multiply `future_value` now uses. Dividing repeatedly by the small
+  // base keeps every intermediate within the safe coefficient range
+  // (unlike multiplying `future` by a high-precision `1 / growth`, which
+  // overflowed once `future` carried the precision of a prior
+  // `future_value` call), and makes PV and FV true numerical inverses so
+  // `future_value(present_value(x)) == x` round-trips to the requested
+  // `digits` in both directions.
+  use base <- result.try(
+    decimal.add(decimal.one(), rate_per_period)
+    |> result.map_error(ArithmeticError),
+  )
+  use discounted <- result.try(discount_loop(
+    base: base,
+    exponent: periods,
+    acc: future,
     digits: work_digits,
   ))
-  // Compute `future / growth` as `future × (1 / growth)` so that the
-  // intermediate scaling inside `decimal.divide` cannot push the
-  // numerator above `max_safe_coefficient` when `future` is large
-  // (e.g. a 7-digit principal at `digits = 6`). The inverse divide
-  // only scales the constant `1`, which stays safely below the
-  // ceiling.
-  use inv_growth <- result.try(
-    decimal.divide(
-      a: decimal.one(),
-      b: growth,
-      digits: work_digits + 1,
-      mode: rounding.HalfEven,
-    )
-    |> result.map_error(ArithmeticError),
-  )
-  // Issue #26: when `future` carries the precision returned by a
-  // previous `future_value` call at the user's requested `digits`
-  // (e.g. 6 places → coefficient ~1.6e9), multiplying it against
-  // the high-precision `inv_growth` coefficient overflows
-  // `max_safe_coefficient`. Round `future` adaptively to the
-  // largest digit count for which the product still fits, so the
-  // FV/PV inverse property holds for callers that thread the
-  // result of `future_value` through `present_value` at the same
-  // `digits`.
-  let future_safe =
-    round_for_safe_multiply(a: future, b: inv_growth, max_digits: work_digits)
-  use product <- result.try(
-    decimal.multiply(future_safe, inv_growth)
-    |> result.map_error(ArithmeticError),
-  )
-  rescale_to_digits(product, digits)
+  rescale_to_digits(discounted, digits)
 }
 
 /// Periodic payment for a fully-amortising loan:
@@ -454,6 +473,50 @@ fn pow_loop(
   let trimmed =
     decimal.round(d: product, digits: digits, mode: rounding.HalfEven)
   pow_loop(base: base, exponent: exponent - 1, acc: trimmed, digits: digits)
+}
+
+/// `acc ÷ base^exponent`, computed by repeated division and rounded to
+/// `digits` decimal places between steps. The exact inverse of
+/// [`pow_loop`](#pow_loop): dividing by the small `base` one period at a
+/// time keeps every intermediate inside the safe coefficient range and
+/// makes `present_value` the numerical inverse of `future_value`.
+fn discount_loop(
+  base base: decimal.Decimal,
+  exponent exponent: Int,
+  acc acc: decimal.Decimal,
+  digits digits: Int,
+) -> Result(decimal.Decimal, InterestError) {
+  use <- bool.guard(when: exponent <= 0, return: Ok(acc))
+  use quotient <- result.try(safe_divide(a: acc, b: base, digits: digits))
+  discount_loop(
+    base: base,
+    exponent: exponent - 1,
+    acc: quotient,
+    digits: digits,
+  )
+}
+
+/// `a / b` at the highest precision `<= digits` that does not overflow
+/// `max_safe_coefficient`. `decimal.divide` scales the dividend up by
+/// `10^digits` before integer division, so a high `digits` against a
+/// large dividend can exceed the safe range; rather than fail, step the
+/// precision down until the division fits. This mirrors the adaptive
+/// precision-shedding `pow_loop` already does on the multiply side, so
+/// the iterative discount stays total instead of surfacing
+/// `PrecisionExceeded` at extreme `digits`.
+fn safe_divide(
+  a a: decimal.Decimal,
+  b b: decimal.Decimal,
+  digits digits: Int,
+) -> Result(decimal.Decimal, InterestError) {
+  case decimal.divide(a: a, b: b, digits: digits, mode: rounding.HalfEven) {
+    Ok(quotient) -> Ok(quotient)
+    Error(err) ->
+      case digits > 0 {
+        True -> safe_divide(a: a, b: b, digits: digits - 1)
+        False -> Error(ArithmeticError(err))
+      }
+  }
 }
 
 /// Round `a` to the largest `d ≤ max_digits` such that

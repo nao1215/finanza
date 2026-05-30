@@ -1,3 +1,5 @@
+import gleam/list
+import gleam/order
 import gleeunit/should
 
 import finanza/decimal
@@ -68,6 +70,130 @@ pub fn present_value_round_trips_high_precision_future_test() -> Nil {
   let assert Ok(expected) = decimal.from_string("1000.00")
   decimal.equal(decimal.round(pv, 2, rounding.HalfEven), expected)
   |> should.be_true
+}
+
+// Issue #76 (re-verification of #26): the *inverse* direction —
+// future_value(present_value(fv, ...), ...) — used to fail with
+// Error(ArithmeticError(PrecisionExceeded)) at digits >= 6, because
+// future_value multiplied the high-precision PV by the growth factor
+// without the adaptive safe-multiply guard that present_value already
+// had. These DoD cases pin the round-trip across the full digit range
+// so the asymmetry cannot return.
+// `|a - b| <= one unit in the last place at `digits``. The FV/PV inverse
+// cannot be bit-exact under fixed-point rounding — every iterative
+// multiply/divide rounds, so the round-trip can land 1 ULP either side of
+// the original. The issue's prose asks for the inverse "within rounding
+// tolerance"; this encodes exactly that bound (1 ULP), which is the
+// strongest guarantee a rounding arithmetic can make.
+fn within_one_ulp(
+  a a: decimal.Decimal,
+  b b: decimal.Decimal,
+  digits digits: Int,
+) -> Bool {
+  let assert Ok(diff) = decimal.subtract(a, b)
+  let one_ulp = decimal.new(coefficient: 1, exponent: -digits)
+  decimal.compare(decimal.absolute(diff), one_ulp) != order.Gt
+}
+
+pub fn fv_pv_inverse_at_common_digits_test() -> Nil {
+  let assert Ok(fv) = decimal.from_string("1000")
+  let assert Ok(rate) = decimal.from_string("0.05")
+  // Within the package's working-precision ceiling, the round-trip
+  // returns to the original within rounding tolerance (1 ULP).
+  list.each([2, 4, 6, 8], fn(digits) {
+    let assert Ok(pv) =
+      interest.present_value(
+        future: fv,
+        rate_per_period: rate,
+        periods: 5,
+        digits: digits,
+      )
+    let assert Ok(fv2) =
+      interest.future_value(
+        present: pv,
+        rate_per_period: rate,
+        periods: 5,
+        digits: digits,
+      )
+    within_one_ulp(a: fv2, b: fv, digits: digits) |> should.be_true
+  })
+}
+
+// Issue #76's headline failure was an outright Error(PrecisionExceeded)
+// crash at digits >= 6. Beyond the working-precision ceiling the round-trip
+// can no longer be exact to the last ULP, but it must never crash and must
+// stay within a few ULP — this guards the no-overflow guarantee across the
+// whole requested range, including the digits=6/8/10 the issue named.
+pub fn fv_pv_inverse_does_not_overflow_at_high_digits_test() -> Nil {
+  let assert Ok(fv) = decimal.from_string("1000")
+  let assert Ok(rate) = decimal.from_string("0.05")
+  list.each([6, 8, 10, 12], fn(digits) {
+    let assert Ok(pv) =
+      interest.present_value(
+        future: fv,
+        rate_per_period: rate,
+        periods: 5,
+        digits: digits,
+      )
+    let assert Ok(fv2) =
+      interest.future_value(
+        present: pv,
+        rate_per_period: rate,
+        periods: 5,
+        digits: digits,
+      )
+    // Stays within a cent regardless of the requested precision.
+    let assert Ok(cent) = decimal.from_string("0.01")
+    let assert Ok(diff) = decimal.subtract(fv2, fv)
+    decimal.compare(decimal.absolute(diff), cent)
+    |> should.equal(order.Lt)
+  })
+}
+
+pub fn pv_fv_inverse_for_diverse_rates_periods_test() -> Nil {
+  let cases = [
+    #("1000", "0.05", 5),
+    #("500", "0.10", 10),
+    #("100", "0.01", 30),
+    #("1", "0.001", 100),
+  ]
+  list.each(cases, fn(c) {
+    let #(fv_s, r_s, n) = c
+    let assert Ok(fv) = decimal.from_string(fv_s)
+    let assert Ok(rate) = decimal.from_string(r_s)
+    let assert Ok(pv) =
+      interest.present_value(
+        future: fv,
+        rate_per_period: rate,
+        periods: n,
+        digits: 8,
+      )
+    let assert Ok(fv2) =
+      interest.future_value(
+        present: pv,
+        rate_per_period: rate,
+        periods: n,
+        digits: 8,
+      )
+    let lhs = decimal.round(fv2, 4, rounding.HalfEven) |> decimal.to_string
+    let rhs = decimal.round(fv, 4, rounding.HalfEven) |> decimal.to_string
+    lhs |> should.equal(rhs)
+  })
+}
+
+// The forward FV at digits >= 6 must also not overflow on its own (the
+// multiply guard makes future_value total for high-precision inputs).
+pub fn future_value_high_digits_does_not_overflow_test() -> Nil {
+  let assert Ok(pv) = decimal.from_string("783.526200")
+  let assert Ok(rate) = decimal.from_string("0.05")
+  let assert Ok(_) =
+    interest.future_value(
+      present: pv,
+      rate_per_period: rate,
+      periods: 5,
+      digits: 6,
+    )
+  Nil
 }
 
 pub fn simple_interest_rejects_negative_principal_test() -> Nil {

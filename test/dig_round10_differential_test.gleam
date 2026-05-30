@@ -192,37 +192,38 @@ pub fn pmt_7y_at_3_5pct_test() -> Nil {
 // --- FV / PV additional scenarios -------------------------------------
 
 pub fn fv_1000_at_5pct_for_10_periods_test() -> Nil {
-  // Textbook: 1628.894627 (Python decimal prec=50).
-  // finanza 7-dp adaptive: 1628.894600 (drift 0.000027, vs the
-  // previous 6-dp regime which produced 1628.894000 = drift 0.000627).
+  // Textbook: 1628.894627 (Python decimal prec=50). The #76 per-period
+  // iterative growth (work_digits = digits + 2) now matches the textbook
+  // value exactly, down from 1628.894600 (drift 0.000027) under the old
+  // single `present × growth` multiply.
   let assert Ok(fv) = interest.future_value(d("1000"), d("0.05"), 10, 6)
   decimal.to_string(fv)
-  |> should.equal("1628.894600")
+  |> should.equal("1628.894627")
 }
 
 pub fn fv_500_at_2pct_for_24_periods_test() -> Nil {
-  // Textbook 50-dp: 804.218754...
-  // finanza 7-dp adaptive: 804.218550.
+  // Textbook 50-dp: 804.218754... The #76 iterative growth lands at
+  // 804.218625 (drift 0.000129), closer than the old 804.218550.
   let assert Ok(fv) = interest.future_value(d("500"), d("0.02"), 24, 6)
   decimal.to_string(fv)
-  |> should.equal("804.218550")
+  |> should.equal("804.218625")
 }
 
 pub fn pv_1000_at_5pct_for_10_periods_test() -> Nil {
-  // Textbook 50-dp: 613.913254...
-  // finanza 7-dp adaptive (with `future × (1/growth)`): 613.913260
-  // (drift 0.000006, down from 0.000236 in the 6-dp regime).
+  // Textbook 50-dp: 613.913254... The #76 per-period iterative discount
+  // (work_digits = digits + 2) now matches the textbook value exactly,
+  // up from 613.913260 (drift 0.000006) under the old `future × (1/growth)`.
   let assert Ok(pv) = interest.present_value(d("1000"), d("0.05"), 10, 6)
   decimal.to_string(pv)
-  |> should.equal("613.913260")
+  |> should.equal("613.913254")
 }
 
 pub fn pv_5000_at_3pct_for_5_periods_test() -> Nil {
-  // Textbook 50-dp: 4313.043898...
-  // finanza 7-dp adaptive: 4313.043850.
+  // Textbook 50-dp: 4313.043898... The #76 iterative discount lands at
+  // 4313.043922 (drift 0.000024), closer than the old 4313.043850.
   let assert Ok(pv) = interest.present_value(d("5000"), d("0.03"), 5, 6)
   decimal.to_string(pv)
-  |> should.equal("4313.043850")
+  |> should.equal("4313.043922")
 }
 
 // --- EAR for monthly / quarterly / daily compounding ------------------
