@@ -165,17 +165,48 @@ pub fn new_explicit_test() -> Nil {
   |> should.equal(-2)
 }
 
-// Issue #25: round is documented as trim-only and does not pad
-// trailing zeros when the input is already at coarser precision than
-// the requested digits. Callers who need the rendered form to carry
-// exactly `digits` decimal places must use `rescale` instead.
-pub fn round_does_not_pad_when_input_is_coarser_test() -> Nil {
-  let two_k = decimal.from_int(2000)
-  decimal.to_string(decimal.round(d: two_k, digits: 2, mode: rounding.HalfEven))
-  |> should.equal("2000")
-  let one = decimal.one()
-  decimal.to_string(decimal.round(d: one, digits: 4, mode: rounding.HalfEven))
-  |> should.equal("1")
+// Issue #75 (re-verification of #25): round must pad to exactly `digits`
+// decimal places. A coarser-precision input is zero-padded so the rendered
+// form always carries `digits` fractional places — the only useful contract
+// for monetary formatting (`to_string(round(d, 2)) == "12.30"`, never "12.3").
+// Regression guard: these cases come straight from the issue's Definition of
+// Done and pin the padding behaviour so the trim-only contract cannot creep
+// back in.
+pub fn round_pads_to_requested_digits_test() -> Nil {
+  let cases = [
+    #("1", 2, "1.00"),
+    #("1", 4, "1.0000"),
+    #("100", 2, "100.00"),
+    #("0.1", 4, "0.1000"),
+    #("1.5", 4, "1.5000"),
+    #("1.5", 0, "2"),
+    #("1.50", 2, "1.50"),
+    #("0", 3, "0.000"),
+    #("2000", 2, "2000.00"),
+  ]
+  list.each(cases, fn(c) {
+    let #(input, digits, expected) = c
+    let assert Ok(d) = decimal.from_string(input)
+    decimal.round(d, digits, rounding.HalfEven)
+    |> decimal.to_string
+    |> should.equal(expected)
+  })
+}
+
+pub fn round_result_exponent_is_negative_digits_test() -> Nil {
+  let assert Ok(d) = decimal.from_string("1")
+  let rounded = decimal.round(d, 2, rounding.HalfEven)
+  decimal.exponent(rounded) |> should.equal(-2)
+}
+
+// round is the non-failing form of rescale targeting exponent -digits;
+// for any in-range value the two must agree, so they cannot drift apart.
+pub fn round_agrees_with_rescale_for_padding_test() -> Nil {
+  let assert Ok(d) = decimal.from_string("7")
+  let assert Ok(via_rescale) = decimal.rescale(d, -3, rounding.HalfEven)
+  decimal.round(d, 3, rounding.HalfEven)
+  |> decimal.to_string
+  |> should.equal(decimal.to_string(via_rescale))
 }
 
 pub fn rescale_pads_when_input_is_coarser_test() -> Nil {
@@ -709,12 +740,12 @@ pub fn truncate_test() -> Nil {
   |> should.equal("2")
 }
 
-pub fn round_no_op_when_already_coarser_test() -> Nil {
+pub fn round_pads_integer_to_requested_dp_test() -> Nil {
   let value = decimal.from_int(5)
-  // rounding to 3 dp shouldn't add zeros
+  // rounding an integer to 3 dp pads to exactly 3 fractional places (#75)
   decimal.round(value, 3, rounding.HalfEven)
   |> decimal.to_string
-  |> should.equal("5")
+  |> should.equal("5.000")
 }
 
 pub fn rescale_expand_test() -> Nil {

@@ -956,31 +956,37 @@ fn half_even_bump(r r: Int, denominator denominator: Int, q q: Int) -> Bool {
 
 // --- Rescaling -----------------------------------------------------------
 
-/// Round to `digits` decimal places, **trim only**. When the input
-/// is already at equal or coarser precision than `-digits` (e.g.
-/// `Decimal(coefficient: 2000, exponent: 0)` against `digits: 2`),
-/// the original `Decimal` is returned unchanged — `round` never
-/// pads with zeros, so `to_string(round(from_int(2000), 2, _))` is
-/// `"2000"`, not `"2000.00"`.
+/// Round to `digits` decimal places. The result always carries exactly
+/// `digits` fractional places: a coarser-precision input is zero-padded
+/// (so `to_string(round(from_int(2000), 2, _))` is `"2000.00"`), a
+/// finer-precision input is rounded using `mode`, and `digits == 0`
+/// yields a plain integer rendering. This is the only useful contract
+/// for monetary formatting — `to_string(round(d, 2, _))` is `"12.30"`,
+/// never `"12.3"`.
 ///
-/// Use [`rescale`](#rescale) when the result must always have
-/// exponent `-digits` (i.e. the rendered form must always have
-/// exactly `digits` decimal places, including trailing zeros) —
-/// `rescale` returns `Result` because the padding direction can
-/// overflow `±9_007_199_254_740_991`.
+/// `round` is the non-failing form of [`rescale`](#rescale) targeting
+/// exponent `-digits`; the two share one implementation so their results
+/// cannot drift. Padding can in principle overflow
+/// `±9_007_199_254_740_991` (only reachable on the JavaScript target);
+/// when it would, `round` falls back to returning the input unchanged
+/// rather than failing. Reach for `rescale` directly when you need to
+/// observe that overflow as an `Error`.
 pub fn round(
   d d: Decimal,
   digits digits: Int,
   mode mode: rounding.Mode,
 ) -> Decimal {
-  let target_exponent = -digits
-  use <- bool.guard(when: target_exponent <= d.exponent, return: d)
-  drop_digits(d: d, target_exponent: target_exponent, mode: mode)
+  case rescale(d: d, target_exponent: -digits, mode: mode) {
+    Ok(result) -> result
+    // nolint: thrown_away_error -- round is total by contract; a padding overflow (JS target only) degrades to the unpadded input rather than failing. Callers who need to observe the overflow use rescale, which returns the Error.
+    Error(_) -> d
+  }
 }
 
-/// Truncate to `digits` decimal places (rounding toward zero), **trim
-/// only**. Like [`round`](#round), the input is returned unchanged
-/// when it is already at equal or coarser precision than `-digits`.
+/// Truncate to `digits` decimal places (rounding toward zero). Like
+/// [`round`](#round), the result carries exactly `digits` fractional
+/// places — a coarser-precision input is zero-padded — but the rounding
+/// direction is always toward zero (`rounding.Down`).
 pub fn truncate(d d: Decimal, digits digits: Int) -> Decimal {
   round(d: d, digits: digits, mode: rounding.Down)
 }
