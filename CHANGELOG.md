@@ -7,6 +7,10 @@ and this project is expected to follow [Semantic Versioning](https://semver.org/
 
 ## [Unreleased]
 
+### Changed
+
+- `finanza/decimal`: `decimal.round(d, digits, mode)` now pads to exactly `digits` fractional places instead of being trim-only. A coarser-precision input is zero-padded — `to_string(round(from_int(2000), 2, _))` is now `"2000.00"`, not `"2000"`, and `round(from_string("1"), 2, _)` renders `"1.00"` — so the result's exponent is always `-digits` (or `0` when `digits == 0`). This is the standard fixed-point contract (Python `Decimal.quantize`, Go `shopspring/decimal.Round`) and the only useful one for monetary formatting. `round` is now the non-failing form of `rescale` (they share one implementation and cannot drift); on the JavaScript-only padding-overflow edge it falls back to the input unchanged. `truncate` pads the same way. Re-verification of #25. **Behavioural change** for callers that relied on the trim-only output. (#75)
+
 ## [0.8.0] - 2026-05-22
 
 ### Added
