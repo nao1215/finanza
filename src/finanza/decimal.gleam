@@ -304,8 +304,18 @@ fn rendered_fits(abs abs: Int, zeros_remaining zeros_remaining: Int) -> Bool {
 /// from_string("")        // Error(EmptyInput)
 /// from_string("1.2.3")   // Error(MultipleDecimalPoints)
 /// ```
+///
+/// **Whitespace.** Leading and trailing *Unicode* whitespace is trimmed
+/// before parsing — not only ASCII space / tab / newline but also
+/// NO-BREAK SPACE (U+00A0), NARROW NO-BREAK SPACE (U+202F), IDEOGRAPHIC
+/// SPACE (U+3000), the en/em-space family (U+2000–U+200A), and the line /
+/// paragraph separators (U+2028 / U+2029). This matches the Unicode
+/// `White_Space` property, so values copied from web pages, locale
+/// currency formatting, or CSV / Excel exports parse without the caller
+/// pre-cleaning them. Whitespace *between* digits is still rejected (e.g.
+/// `"1 . 5"` and `"1\u{00a0}5"` both fail) — trimming is at the ends only.
 pub fn from_string(input input: String) -> Result(Decimal, ParseError) {
-  let trimmed = string.trim(input)
+  let trimmed = trim_unicode_whitespace(input)
   use <- bool.guard(when: trimmed == "", return: Error(EmptyInput))
   case split_scientific_notation(trimmed) {
     Ok(#(mantissa, exponent_shift)) -> {
@@ -313,6 +323,56 @@ pub fn from_string(input input: String) -> Result(Decimal, ParseError) {
       shift_exponent(base, exponent_shift)
     }
     Error(parse_error) -> Error(parse_error)
+  }
+}
+
+/// Trim leading and trailing Unicode whitespace. `string.trim` only
+/// removes ASCII whitespace on the targets finanza supports, which
+/// surprised callers feeding it text that legitimately carries NBSP and
+/// other Unicode spaces; this strips the full Unicode `White_Space` set
+/// from both ends explicitly so the behaviour is identical across targets.
+fn trim_unicode_whitespace(input: String) -> String {
+  input
+  |> string.to_graphemes
+  |> list.drop_while(is_unicode_whitespace)
+  |> list.reverse
+  |> list.drop_while(is_unicode_whitespace)
+  |> list.reverse
+  |> string.join("")
+}
+
+/// `True` for a single grapheme that is a Unicode whitespace code point
+/// (the `White_Space` property, plus the BOM / ZERO WIDTH NO-BREAK SPACE
+/// `U+FEFF` that commonly prefixes exported files).
+fn is_unicode_whitespace(grapheme: String) -> Bool {
+  case grapheme {
+    " "
+    | "\t"
+    | "\n"
+    | "\r"
+    | "\f"
+    | "\u{000B}"
+    | "\u{0085}"
+    | "\u{00A0}"
+    | "\u{1680}"
+    | "\u{2000}"
+    | "\u{2001}"
+    | "\u{2002}"
+    | "\u{2003}"
+    | "\u{2004}"
+    | "\u{2005}"
+    | "\u{2006}"
+    | "\u{2007}"
+    | "\u{2008}"
+    | "\u{2009}"
+    | "\u{200A}"
+    | "\u{2028}"
+    | "\u{2029}"
+    | "\u{202F}"
+    | "\u{205F}"
+    | "\u{3000}"
+    | "\u{FEFF}" -> True
+    _ -> False
   }
 }
 

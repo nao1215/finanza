@@ -383,6 +383,54 @@ pub fn parse_whitespace_only_test() -> Nil {
   |> should.equal(Error(decimal.EmptyInput))
 }
 
+// Issue #74: from_string trims leading/trailing *Unicode* whitespace, not
+// only ASCII. Real-world inputs — copy/paste from web pages, locale currency
+// formatting, CSV/Excel exports — carry NO-BREAK SPACE (U+00A0), NARROW NBSP
+// (U+202F), IDEOGRAPHIC SPACE (U+3000) and friends; the old ASCII-only trim
+// rejected them with a confusing InvalidCharacter that rendered the offending
+// codepoint as a plain space. These pin the documented lenient contract so the
+// ASCII-only surprise cannot return.
+pub fn parse_trims_ascii_whitespace_test() -> Nil {
+  let assert Ok(value) = decimal.from_string(" \t1.5\n ")
+  decimal.to_string(value) |> should.equal("1.5")
+}
+
+pub fn parse_trims_nbsp_test() -> Nil {
+  let assert Ok(value) = decimal.from_string("\u{00a0}1.5\u{00a0}")
+  decimal.to_string(value) |> should.equal("1.5")
+}
+
+pub fn parse_trims_narrow_nbsp_test() -> Nil {
+  let assert Ok(value) = decimal.from_string("\u{202f}1.5\u{202f}")
+  decimal.to_string(value) |> should.equal("1.5")
+}
+
+pub fn parse_trims_ideographic_space_test() -> Nil {
+  let assert Ok(value) = decimal.from_string("\u{3000}42\u{3000}")
+  decimal.to_string(value) |> should.equal("42")
+}
+
+pub fn parse_trims_mixed_unicode_whitespace_test() -> Nil {
+  // en/em/thin spaces (U+2002/U+2003/U+2009) and a line separator (U+2028).
+  let assert Ok(value) =
+    decimal.from_string("\u{2002}\u{2003}\u{2009}-0.25\u{2028}")
+  decimal.to_string(value) |> should.equal("-0.25")
+}
+
+pub fn parse_all_unicode_whitespace_is_empty_input_test() -> Nil {
+  decimal.from_string("\u{00a0}\u{3000}\u{202f}")
+  |> should.equal(Error(decimal.EmptyInput))
+}
+
+pub fn parse_inner_unicode_whitespace_still_rejected_test() -> Nil {
+  // Trimming is leading/trailing only — an inner NBSP is still invalid,
+  // surfaced at its grapheme position rather than silently stripped.
+  decimal.from_string("1\u{00a0}5")
+  |> should.equal(
+    Error(decimal.InvalidCharacter(char: "\u{00a0}", position: 1)),
+  )
+}
+
 pub fn parse_double_decimal_test() -> Nil {
   decimal.from_string("1.2.3")
   |> should.equal(Error(decimal.MultipleDecimalPoints))
