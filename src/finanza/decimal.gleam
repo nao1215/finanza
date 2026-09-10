@@ -884,12 +884,18 @@ pub fn add(a a: Decimal, b b: Decimal) -> Result(Decimal, ArithmeticError) {
 }
 
 /// Subtract `b` from `a`.
-pub fn subtract(a a: Decimal, b b: Decimal) -> Result(Decimal, ArithmeticError) {
+pub fn subtract(
+  a a: Decimal,
+  b b: Decimal,
+) -> Result(Decimal, ArithmeticError) {
   add(a: a, b: negate(d: b))
 }
 
 /// Multiply two decimals.
-pub fn multiply(a a: Decimal, b b: Decimal) -> Result(Decimal, ArithmeticError) {
+pub fn multiply(
+  a a: Decimal,
+  b b: Decimal,
+) -> Result(Decimal, ArithmeticError) {
   use product <- result.map(check_precision(a.coefficient * b.coefficient))
   Decimal(coefficient: product, exponent: a.exponent + b.exponent)
 }
