@@ -7,9 +7,15 @@ and this project is expected to follow [Semantic Versioning](https://semver.org/
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-09-10
+
 ### Changed
 
 - The minimum Gleam version is now 1.14.0 (was 1.15.0). 1.14.0 builds and tests the package unchanged on both targets, and `gleam_stdlib` 1.0 already requires it. CI tests that floor alongside the latest Gleam 1.x.
+
+### Fixed
+
+- `finanza.version()` returned `"0.2.0"` in every release since 0.2.0; it now returns the published package version.
 
 ## [0.9.0] - 2026-05-30
 
