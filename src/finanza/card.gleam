@@ -526,7 +526,9 @@ pub fn expiry_valid(
 /// `"1.26"`) but not in the unseparated form — `"126"` is ambiguous
 /// between "January 2026" and "December year 26" so the parser
 /// refuses to guess and returns `Error(InvalidExpiry)`.
-pub fn parse_expiry(input input: String) -> Result(#(Int, Int), ValidationError) {
+pub fn parse_expiry(
+  input input: String,
+) -> Result(#(Int, Int), ValidationError) {
   let trimmed = string.trim(input)
   case extract_month_year(trimmed) {
     Ok(#(month_str, year_str)) -> {

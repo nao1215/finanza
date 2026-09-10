@@ -425,7 +425,11 @@ fn random_ratios(prng: Prng) -> #(List(Int), Prng) {
   ratios_loop(p1, length, [])
 }
 
-fn ratios_loop(prng: Prng, remaining: Int, acc: List(Int)) -> #(List(Int), Prng) {
+fn ratios_loop(
+  prng: Prng,
+  remaining: Int,
+  acc: List(Int),
+) -> #(List(Int), Prng) {
   case remaining <= 0 {
     True -> #(acc, prng)
     False -> {
