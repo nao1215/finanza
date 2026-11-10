@@ -203,16 +203,19 @@ pub fn still_valid(month: Int, year: Int) -> Bool {
 
 ## Verifying releases
 
-Each GitHub Release attaches the package tarball (`finanza-<version>.tar`), `checksums.txt`, a cosign signature bundle for it (`checksums.txt.sigstore.json`) and the build provenance (`finanza-<version>.intoto.jsonl`). Download them from the release page, then verify:
+Each GitHub Release attaches the Hex package tarball (`finanza-<version>.tar`),
+`checksums.txt`, a cosign signature bundle (`checksums.txt.sigstore.json`) and
+build provenance (`finanza-<version>.intoto.jsonl`). Download the assets, then:
 
 ```sh
 gh attestation verify finanza-<version>.tar --repo nao1215/finanza
 
-sha256sum -c checksums.txt
-cosign verify-blob --bundle checksums.txt.sigstore.json \
-  --certificate-identity-regexp '^https://github.com/nao1215/finanza/' \
+cosign verify-blob \
+  --bundle checksums.txt.sigstore.json \
+  --certificate-identity-regexp '^https://github\.com/nao1215/finanza/\.github/workflows/release\.yml@refs/tags/v' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   checksums.txt
+sha256sum --check checksums.txt
 ```
 
 ## License
