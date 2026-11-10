@@ -201,6 +201,20 @@ pub fn still_valid(month: Int, year: Int) -> Bool {
 - JavaScript target: Decimal coefficients are capped at 2^53 − 1.
   Operations beyond that return `decimal.PrecisionExceeded`.
 
+## Verifying releases
+
+Each GitHub Release attaches the package tarball (`finanza-<version>.tar`), `checksums.txt`, a cosign signature bundle for it (`checksums.txt.sigstore.json`) and the build provenance (`finanza-<version>.intoto.jsonl`). Download them from the release page, then verify:
+
+```sh
+gh attestation verify finanza-<version>.tar --repo nao1215/finanza
+
+sha256sum -c checksums.txt
+cosign verify-blob --bundle checksums.txt.sigstore.json \
+  --certificate-identity-regexp '^https://github.com/nao1215/finanza/' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  checksums.txt
+```
+
 ## License
 
 [MIT](LICENSE)
