@@ -4,11 +4,14 @@ Decimal arithmetic, currency formatting, time-value-of-money, and
 payment-card helpers for Gleam. Runs on the Erlang and JavaScript
 targets.
 
-[![Package Version](https://img.shields.io/hexpm/v/finanza)](https://hex.pm/packages/finanza)
-[![Downloads](https://img.shields.io/hexpm/dt/finanza)](https://hex.pm/packages/finanza)
-[![Hex Docs](https://img.shields.io/badge/hex-docs-ffaff3)](https://hexdocs.pm/finanza/)
 [![CI](https://github.com/nao1215/finanza/actions/workflows/ci.yml/badge.svg)](https://github.com/nao1215/finanza/actions/workflows/ci.yml)
-[![License](https://img.shields.io/github/license/nao1215/finanza)](LICENSE)
+[![Gitleaks](https://github.com/nao1215/finanza/actions/workflows/gitleaks.yml/badge.svg)](https://github.com/nao1215/finanza/actions/workflows/gitleaks.yml)
+[![Trivy](https://github.com/nao1215/finanza/actions/workflows/trivy.yml/badge.svg)](https://github.com/nao1215/finanza/actions/workflows/trivy.yml)
+[![OSV-Scanner](https://github.com/nao1215/finanza/actions/workflows/osv-scan.yml/badge.svg)](https://github.com/nao1215/finanza/actions/workflows/osv-scan.yml)
+[![Hex](https://img.shields.io/hexpm/v/finanza)](https://hex.pm/packages/finanza)
+[![Hex Docs](https://img.shields.io/badge/hex-docs-ffaff3)](https://hexdocs.pm/finanza/)
+[![Hex Downloads](https://img.shields.io/hexpm/dt/finanza)](https://hex.pm/packages/finanza)
+[![License](https://img.shields.io/github/license/nao1215/finanza)](./LICENSE)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/nao1215/finanza/badge)](https://scorecard.dev/viewer/?uri=github.com/nao1215/finanza)
 
 ```sh
