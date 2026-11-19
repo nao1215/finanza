@@ -9,5 +9,5 @@ pub fn main() -> Nil {
 pub fn version_matches_gleam_toml_test() -> Nil {
   // Must equal `version` in gleam.toml; the release checklist updates both.
   finanza.version()
-  |> should.equal("0.10.0")
+  |> should.equal("0.11.0")
 }
