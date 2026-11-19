@@ -15,5 +15,5 @@
 /// version reporting in dependent applications.
 pub fn version() -> String {
   // Keep in sync with `version` in gleam.toml when cutting a release.
-  "0.10.0"
+  "0.11.0"
 }
