@@ -1,3 +1,5 @@
+import gleam/list
+import gleam/string
 import gleeunit/should
 
 import finanza/card
@@ -135,6 +137,50 @@ pub fn detect_unionpay_test() -> Nil {
 pub fn detect_unknown_test() -> Nil {
   card.detect_brand(pan: "9999999999999999")
   |> should.equal(card.Unknown)
+}
+
+/// `prefix` padded with zeros to `length` digits. Brand detection does
+/// not check the Luhn digit, so these synthetic numbers are enough to
+/// probe the edges of each prefix range and length window.
+fn pan(prefix: String, length: Int) -> String {
+  prefix <> string.repeat("0", length - string.length(prefix))
+}
+
+pub fn detect_brand_at_the_edges_of_each_range_test() -> Nil {
+  // Found by mutation testing: only one PAN per brand was checked, so
+  // the range ends and the length windows were never exercised.
+  [
+    #(pan("4", 13), card.Visa),
+    #(pan("4", 19), card.Visa),
+    #(pan("4", 14), card.Unknown),
+    #(pan("34", 15), card.AmericanExpress),
+    #(pan("34", 16), card.Unknown),
+    #(pan("300", 14), card.DinersClub),
+    #(pan("305", 19), card.DinersClub),
+    #(pan("306", 14), card.Unknown),
+    #(pan("36", 14), card.DinersClub),
+    #(pan("38", 16), card.DinersClub),
+    #(pan("39", 14), card.DinersClub),
+    #(pan("36", 13), card.Unknown),
+    #(pan("3528", 16), card.Jcb),
+    #(pan("3589", 19), card.Jcb),
+    #(pan("3527", 16), card.Unknown),
+    #(pan("3590", 16), card.Unknown),
+    #(pan("3528", 15), card.Unknown),
+    #(pan("6011", 19), card.Discover),
+    #(pan("6011", 15), card.Unknown),
+    #(pan("644", 16), card.Discover),
+    #(pan("649", 16), card.Discover),
+    #(pan("643", 16), card.Unknown),
+    #(pan("65", 16), card.Discover),
+    #(pan("62", 16), card.UnionPay),
+    #(pan("62", 19), card.UnionPay),
+    #(pan("62", 15), card.Unknown),
+  ]
+  |> list.each(fn(case_) {
+    let #(number, brand) = case_
+    card.detect_brand(pan: number) |> should.equal(brand)
+  })
 }
 
 pub fn brand_to_string_test() -> Nil {

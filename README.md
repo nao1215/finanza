@@ -204,6 +204,17 @@ pub fn still_valid(month: Int, year: Int) -> Bool {
 - JavaScript target: Decimal coefficients are capped at 2^53 − 1.
   Operations beyond that return `decimal.PrecisionExceeded`.
 
+## Testing
+
+| Technique | Bug class caught here |
+|---|---|
+| Examples and unit tests | [Wrong values at rounding ties, limits and public test PANs](doc/testing.md#examples-and-unit-tests) |
+| Generated properties | [Broken arithmetic laws, totals that do not add up](doc/testing.md#generated-properties) |
+| Metamorphic relations | [Results that change under scaling or an inverse operation](doc/testing.md#metamorphic-relations) |
+| Differential testing | [Rounding and division that disagree with Python decimal or an integer oracle](doc/testing.md#differential-testing) |
+| Fuzzing | [Parsers that crash on malformed input](doc/testing.md#fuzzing) |
+| Mutation testing | [Assertions that miss a changed operator or branch](doc/testing.md#mutation-testing) |
+
 ## Verifying releases
 
 Each GitHub Release attaches the Hex package tarball (`finanza-<version>.tar`),
