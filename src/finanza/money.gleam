@@ -14,6 +14,8 @@ import gleam/string
 
 import finanza/decimal
 
+const max_safe_integer: Int = 9_007_199_254_740_991
+
 /// A currency: its ISO 4217 code, the number of digits in its minor
 /// unit (2 for cents, 0 for yen), its symbol and its English name.
 ///
@@ -351,6 +353,10 @@ pub fn compare(a: Money, b: Money) -> Result(order.Order, MoneyError) {
 /// go one each to the first slots with a non-zero ratio, so the parts
 /// add up to the rounded amount. A zero ratio gets nothing.
 ///
+/// Each share is exact on both targets, also for amounts near 2^53 − 1
+/// minor units. Returns `Error(ArithmeticFailed(PrecisionExceeded))`
+/// when the ratios add up to more than 2^53 − 1.
+///
 /// ## Examples
 ///
 /// ```gleam
@@ -375,11 +381,23 @@ pub fn allocate(
       || list.all(ratios, fn(ratio) { ratio == 0 }),
     return: Error(NonPositiveRatio),
   )
-  use units <- result.try(to_minor(money, rounding: decimal.HalfEven))
   let total_ratio = int.sum(ratios)
+  use <- bool.guard(
+    when: total_ratio > max_safe_integer,
+    return: Error(ArithmeticFailed(decimal.PrecisionExceeded)),
+  )
+  use units <- result.try(to_minor(money, rounding: decimal.HalfEven))
   let magnitude = int.absolute_value(units)
+  let whole = magnitude / total_ratio
+  let rest = magnitude % total_ratio
+  // magnitude × ratio / total_ratio, split so that no product passes
+  // 2^53 − 1: whole × ratio is at most the magnitude, and the rest of
+  // the share comes from multiplying modulo total_ratio.
   let shares =
-    list.map(ratios, fn(ratio) { #(ratio, magnitude * ratio / total_ratio) })
+    list.map(ratios, fn(ratio) {
+      let #(extra, _) = multiply_modulo(rest, ratio, total_ratio)
+      #(ratio, whole * ratio + extra)
+    })
   let used = list.fold(shares, 0, fn(total, share) { total + share.1 })
   let sign = case units < 0 {
     True -> -1
@@ -387,6 +405,34 @@ pub fn allocate(
   }
   distribute(shares, magnitude - used)
   |> list.try_map(fn(share) { from_minor(sign * share, in: money.currency) })
+}
+
+// Returns the quotient and remainder of `value × times / modulus`, for
+// `0 <= value < modulus`, by doubling and adding modulo `modulus`, so
+// every intermediate value stays below `modulus` or the final quotient.
+fn multiply_modulo(value: Int, times: Int, modulus: Int) -> #(Int, Int) {
+  use <- bool.guard(when: times == 0, return: #(0, 0))
+  let #(half_quotient, half_remainder) =
+    multiply_modulo(value, times / 2, modulus)
+  let #(carry, doubled) = add_modulo(half_remainder, half_remainder, modulus)
+  let quotient = 2 * half_quotient + carry
+  case times % 2 {
+    0 -> #(quotient, doubled)
+    _ -> {
+      let #(carry, remainder) = add_modulo(doubled, value, modulus)
+      #(quotient + carry, remainder)
+    }
+  }
+}
+
+// `a + b` modulo `modulus` and whether it wrapped, for `a` and `b` below
+// `modulus`, without computing a sum that passes `modulus`.
+fn add_modulo(a: Int, b: Int, modulus: Int) -> #(Int, Int) {
+  let room = modulus - b
+  case a >= room {
+    True -> #(1, a - room)
+    False -> #(0, a + b)
+  }
 }
 
 fn distribute(shares: List(#(Int, Int)), remainder: Int) -> List(Int) {

@@ -44,7 +44,8 @@ There is no `finanza` root module. Each public module is one domain.
 ## Design principles
 
 - Only `Decimal` is opaque, because its coefficient must stay within
-  2^53 - 1 (also for the integer a positive exponent stands for).
+  2^53 - 1 (also for the integer a positive exponent stands for) and
+  its exponent within -28..15.
   Every other type (`Currency`, `Money`, `FormatOptions`,
   `MaskOptions`, `Period`, `Expiry`) is a plain record that callers
   build and read directly, with defaults as constants

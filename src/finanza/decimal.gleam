@@ -4,10 +4,29 @@
 //// the coefficient `1230` with the exponent `-2`. Operations that can
 //// lose digits take a `RoundingMode`.
 ////
-//// The coefficient, and the integer a positive exponent stands for,
-//// stay within ±9,007,199,254,740,991 (2^53 − 1) on both targets, so
-//// results are the same on Erlang and JavaScript. Results outside
-//// that range are `PrecisionExceeded` errors.
+//// ## Range
+////
+//// Every `Decimal` is in this range, on both targets:
+////
+//// - The exponent is between -28 and 15, so a decimal has at most 28
+////   places after the point. Currencies use 0 to 4 places and interest
+////   rates rarely need more than 10, and 28 is the largest scale of
+////   rust_decimal and .NET `System.Decimal`. 15 is the largest exponent
+////   at which a non-zero coefficient fits the bound below.
+//// - The coefficient, and the integer a positive exponent stands for,
+////   are within ±9,007,199,254,740,991 (2^53 − 1), the largest integer
+////   JavaScript represents exactly, so Erlang and JavaScript give the
+////   same results.
+////
+//// Together these keep `to_string` at 31 characters or fewer, so a short
+//// input such as `"1e-999999999"` cannot become a long string.
+////
+//// `new` returns `Error(Nil)` outside the range, `parse` returns
+//// `ParsedValueTooLarge`, and arithmetic returns `PrecisionExceeded`,
+//// also when `round` or `divide` is asked for more than 28 places.
+//// `parse` rejects input over 1,000 bytes with `InputTooLong` before
+//// reading it, the same limit as the default number length of Jackson's
+//// `StreamReadConstraints`.
 
 import gleam/bool
 import gleam/float
@@ -62,8 +81,13 @@ pub type ParseError {
   MultipleSigns
   /// The input has no digits, such as `"+"` or `"."`.
   NoDigits
-  /// The value is outside the supported range.
+  /// The value is outside the supported range: more than 2^53 − 1 in
+  /// the coefficient, or an exponent outside -28 to 15. The exponent is
+  /// kept, so `"1e-29"` and `"0.10000000000000000000000000000"` are both
+  /// out of range.
   ParsedValueTooLarge
+  /// The input is longer than 1,000 bytes, counted before trimming.
+  InputTooLong
 }
 
 /// Why an arithmetic operation failed.
@@ -76,6 +100,12 @@ pub type ArithmeticError {
 }
 
 const max_safe_coefficient: Int = 9_007_199_254_740_991
+
+const min_exponent: Int = -28
+
+const max_exponent: Int = 15
+
+const max_input_bytes: Int = 1000
 
 // Construction ---------------------------------------------------------------
 
@@ -93,7 +123,9 @@ pub fn one() -> Decimal {
 
 /// Creates the decimal `coefficient × 10^exponent`.
 ///
-/// Returns `Error(Nil)` when the value is outside the supported range.
+/// Returns `Error(Nil)` when the value is outside the supported range:
+/// the exponent must be between -28 and 15, and the coefficient, times
+/// `10^exponent` when the exponent is positive, within ±(2^53 − 1).
 ///
 /// ## Examples
 ///
@@ -139,6 +171,10 @@ pub fn from_float(value: Float) -> Result(Decimal, ParseError) {
 /// no-break spaces. The exponent is kept, so `"12.30"` and `"12.3"`
 /// parse to different representations of the same number.
 ///
+/// Returns `Error(InputTooLong)` for input over 1,000 bytes and
+/// `Error(ParsedValueTooLarge)` for a value outside the range in the
+/// module documentation, such as `"1e-29"` or `"1e16"`.
+///
 /// ## Examples
 ///
 /// ```gleam
@@ -152,6 +188,10 @@ pub fn from_float(value: Float) -> Result(Decimal, ParseError) {
 /// ```
 ///
 pub fn parse(input: String) -> Result(Decimal, ParseError) {
+  use <- bool.guard(
+    when: string.byte_size(input) > max_input_bytes,
+    return: Error(InputTooLong),
+  )
   let trimmed = trim_unicode_whitespace(input)
   use <- bool.guard(when: trimmed == "", return: Error(EmptyInput))
   use #(mantissa, shift) <- result.try(split_scientific_notation(trimmed))
@@ -530,8 +570,11 @@ pub fn multiply(a: Decimal, b: Decimal) -> Result(Decimal, ArithmeticError) {
 /// the decimal point.
 ///
 /// Returns `Error(DivisionByZero)` when `b` is zero, and
-/// `Error(PrecisionExceeded)` when the quotient at that many places is
-/// out of range, which happens from about 15 places for `1 / 3`.
+/// `Error(PrecisionExceeded)` when `digits` is outside -15 to 28 or the
+/// quotient at that many places is out of range, which happens from
+/// 17 places for `1 / 3`. The quotient is exact before rounding
+/// even when the scaled dividend would pass 2^53, so
+/// `1 / 1.234567890123456` at 2 places is `0.81`.
 ///
 /// ## Examples
 ///
@@ -550,15 +593,25 @@ pub fn divide(
   rounding mode: RoundingMode,
 ) -> Result(Decimal, ArithmeticError) {
   use <- bool.guard(when: b.coefficient == 0, return: Error(DivisionByZero))
+  use <- bool.guard(
+    when: -digits < min_exponent || -digits > max_exponent,
+    return: Error(PrecisionExceeded),
+  )
   use <- bool.guard(when: a.coefficient == 0, return: checked(0, -digits))
   let sign = sign_of(a.coefficient) * sign_of(b.coefficient)
   let numerator = int.absolute_value(a.coefficient)
   let denominator = int.absolute_value(b.coefficient)
+  // The bounds on the exponents and on digits keep shift within -58..71.
   let shift = a.exponent - b.exponent + digits
   case shift >= 0 {
     True -> {
-      use numerator <- result.try(scale_up(numerator, shift))
-      round_quotient(numerator, denominator, sign, mode)
+      use #(quotient, remainder) <- result.try(long_division(
+        numerator / denominator,
+        numerator % denominator,
+        denominator,
+        shift,
+      ))
+      round_parts(quotient, remainder, denominator, sign, mode)
       |> checked(-digits)
     }
     False ->
@@ -590,8 +643,8 @@ pub fn divide(
 ///
 /// The result always has exactly `digits` places: `12.3` rounded to 2
 /// places is `12.30`. A negative `digits` rounds to tens, hundreds and
-/// so on. Returns `Error(PrecisionExceeded)` when the padded or rounded
-/// value is out of range.
+/// so on. Returns `Error(PrecisionExceeded)` when `digits` is outside
+/// -15 to 28 or the padded or rounded value is out of range.
 ///
 /// ## Examples
 ///
@@ -615,6 +668,10 @@ pub fn round(
   rounding mode: RoundingMode,
 ) -> Result(Decimal, ArithmeticError) {
   let target = -digits
+  use <- bool.guard(
+    when: target < min_exponent || target > max_exponent,
+    return: Error(PrecisionExceeded),
+  )
   case int.compare(target, decimal.exponent) {
     order.Eq -> Ok(decimal)
     order.Lt -> {
@@ -648,8 +705,25 @@ fn round_quotient(
   sign: Int,
   mode: RoundingMode,
 ) -> Int {
-  let quotient = numerator / denominator
-  let remainder = numerator - quotient * denominator
+  round_parts(
+    numerator / denominator,
+    numerator % denominator,
+    denominator,
+    sign,
+    mode,
+  )
+}
+
+// Applies the rounding mode to `quotient + remainder / denominator`,
+// where `0 <= remainder < denominator`, then restores the sign. Doubling
+// the remainder may pass 2^53, but a JavaScript float doubles exactly.
+fn round_parts(
+  quotient: Int,
+  remainder: Int,
+  denominator: Int,
+  sign: Int,
+  mode: RoundingMode,
+) -> Int {
   let bump = case remainder {
     0 -> False
     _ ->
@@ -737,10 +811,10 @@ fn checked(
 ) -> Result(Decimal, ArithmeticError) {
   let magnitude = int.absolute_value(coefficient)
   let fits = case magnitude, exponent > 0 {
+    _, _ if exponent < min_exponent || exponent > max_exponent -> False
     0, _ -> True
     _, False -> magnitude <= max_safe_coefficient
-    _, True ->
-      exponent <= 15 && magnitude * pow_10(exponent) <= max_safe_coefficient
+    _, True -> magnitude * pow_10(exponent) <= max_safe_coefficient
   }
   case fits {
     True -> Ok(Decimal(coefficient, exponent))
@@ -761,6 +835,44 @@ fn scale_up(coefficient: Int, places: Int) -> Result(Int, ArithmeticError) {
         False -> Ok(scaled)
       }
     }
+  }
+}
+
+// Continues the division `numerator / denominator` for `places` more
+// decimal places, one digit at a time, so that the scaled numerator
+// `numerator × 10^places` is never built. Every intermediate value stays
+// below the denominator or the quotient bound, so JavaScript computes it
+// exactly. Fails as soon as the quotient passes 2^53 − 1.
+fn long_division(
+  quotient: Int,
+  remainder: Int,
+  denominator: Int,
+  places: Int,
+) -> Result(#(Int, Int), ArithmeticError) {
+  use <- bool.guard(when: places <= 0, return: Ok(#(quotient, remainder)))
+  let #(digit, remainder) = times_ten(remainder, denominator, 10, 0, 0)
+  use <- bool.guard(
+    when: quotient > { max_safe_coefficient - digit } / 10,
+    return: Error(PrecisionExceeded),
+  )
+  long_division(quotient * 10 + digit, remainder, denominator, places - 1)
+}
+
+// Returns the quotient and remainder of `value × 10 / modulus`, for
+// `0 <= value < modulus`, by adding `value` ten times modulo `modulus`.
+// The running total stays below `modulus`.
+fn times_ten(
+  value: Int,
+  modulus: Int,
+  count: Int,
+  carries: Int,
+  total: Int,
+) -> #(Int, Int) {
+  use <- bool.guard(when: count == 0, return: #(carries, total))
+  let room = modulus - value
+  case total >= room {
+    True -> times_ten(value, modulus, count - 1, carries + 1, total - room)
+    False -> times_ten(value, modulus, count - 1, carries, total + value)
   }
 }
 

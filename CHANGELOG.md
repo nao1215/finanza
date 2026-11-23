@@ -7,6 +7,36 @@ and this project is expected to follow [Semantic Versioning](https://semver.org/
 
 ## [Unreleased]
 
+### Breaking
+
+A `Decimal` now has a bounded exponent as well as a bounded coefficient, so untrusted input cannot make a huge value. The range is the same on Erlang and JavaScript.
+
+- The exponent must be between -28 and 15, for zero too. 28 places cover every ISO 4217 minor unit (0 to 4) and interest rates with room to spare, and match the largest scale of rust_decimal and .NET `System.Decimal`; 15 is the largest exponent at which a non-zero coefficient fits within 2^53 − 1. `decimal.new` returns `Error(Nil)`, `decimal.parse` returns `ParsedValueTooLarge`, and `multiply`, `round` and `divide` return `PrecisionExceeded` outside it. Before, `parse("1e-999999999")` succeeded and `to_string` of the result built a string of a billion characters.
+- `decimal.round` and `decimal.divide` return `PrecisionExceeded` when `digits` is outside -15 to 28, before doing any work. `round(decimal.zero(), digits: 30, ..)` and `round(decimal.one(), digits: -20, ..)` used to return a zero with that exponent.
+- `decimal.parse` returns the new `InputTooLong` variant for input over 1,000 bytes, counted before whitespace is trimmed. 1,000 is the default maximum number length of Jackson's `StreamReadConstraints`. A `case` over `ParseError` needs a branch for it.
+- `interest` functions return `ArithmeticFailed(PrecisionExceeded)` for `digits` above 28 before doing any work. `future_value` and `present_value` work at no more than 28 places.
+- `money.allocate` returns `ArithmeticFailed(PrecisionExceeded)` when the ratios add up to more than 2^53 − 1.
+
+Before:
+
+```gleam
+decimal.parse("1e-999999999") |> result.map(decimal.to_string)
+// -> Ok("0.000…0001"), a string of 1,000,000,001 characters
+```
+
+After:
+
+```gleam
+decimal.parse("1e-999999999")
+// -> Error(decimal.ParsedValueTooLarge)
+```
+
+### Fixed
+
+- `decimal.divide` failed when the dividend had to be scaled past 2^53 although the quotient was small, such as `1 / 1.234567890123456` at 2 places. It now divides one digit at a time without building the scaled dividend and returns `0.81`; it fails only when the rounded quotient is out of range. `1 / 3` now works up to 16 places instead of 15.
+- On JavaScript, `money.allocate` multiplied the amount by each ratio before dividing, so for amounts near 2^53 minor units the product lost its low digits and the parts could miss the total. Each share is now computed without a product past 2^53, and both targets give the same parts.
+- A huge `digits` made `interest.future_value` and `present_value` retry once per place, which took time proportional to `digits`.
+
 ## [0.12.0] - 2026-11-23
 
 ### Breaking

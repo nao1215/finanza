@@ -43,6 +43,10 @@ on security triage:
   both targets, so results match on Erlang and JavaScript. Operations
   that would exceed this bound return `PrecisionExceeded` rather than
   silently losing precision.
+- **Input size**: a `Decimal` exponent is between -28 and 15, and
+  `decimal.parse` rejects longer input than 1,000 bytes with
+  `InputTooLong`, so untrusted text such as `"1e-999999999"` cannot
+  make `to_string` build a long string.
 - **No live data**: the ISO 4217 currency catalog and the card-brand
   IIN ranges are static snapshots. They are not authoritative for
   newly issued or recently retired codes. Applications that need

@@ -305,6 +305,7 @@ fn format_parse(r: Result(decimal.Decimal, decimal.ParseError)) -> String {
     Error(decimal.MultipleSigns) -> "MultipleSigns"
     Error(decimal.NoDigits) -> "NoDigits"
     Error(decimal.ParsedValueTooLarge) -> "ParsedValueTooLarge"
+    Error(decimal.InputTooLong) -> "InputTooLong"
   }
 }
 

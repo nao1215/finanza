@@ -47,14 +47,14 @@ pub fn doc_examples_test() {
   assert decimal.divide(
       support.int(1),
       support.int(3),
-      digits: 15,
+      digits: 16,
       rounding: decimal.HalfEven,
     )
     |> result.is_ok
   assert decimal.divide(
       support.int(1),
       support.int(3),
-      digits: 16,
+      digits: 17,
       rounding: decimal.HalfEven,
     )
     == Error(decimal.PrecisionExceeded)

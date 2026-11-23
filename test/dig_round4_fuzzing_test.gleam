@@ -111,6 +111,7 @@ pub fn fuzz_decimal_parser_short_strings_test() -> Nil {
       Error(decimal.MultipleSigns) -> p2
       Error(decimal.NoDigits) -> p2
       Error(decimal.ParsedValueTooLarge) -> p2
+      Error(decimal.InputTooLong) -> p2
     }
   })
   // The loop did not crash → property holds.
@@ -132,6 +133,7 @@ pub fn fuzz_decimal_parser_long_strings_test() -> Nil {
       Error(decimal.MultipleSigns) -> p2
       Error(decimal.NoDigits) -> p2
       Error(decimal.ParsedValueTooLarge) -> p2
+      Error(decimal.InputTooLong) -> p2
     }
   })
   Nil
