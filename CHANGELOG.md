@@ -7,6 +7,8 @@ and this project is expected to follow [Semantic Versioning](https://semver.org/
 
 ## [Unreleased]
 
+## [0.13.4] - 2026-11-23
+
 ### Fixed
 
 - `interest.payment`, `effective_annual_rate` and `schedule` compounded at 7 places, so a payment near a half-cent could round to the wrong cent: a 200,000 loan at the monthly rate `0.0058333333333333` (7% a year) over 360 months paid 1330.61 against an exact 1330.604990, and every row of its schedule followed. They now keep every intermediate value at the most places, up to 28, that fit a `Decimal`, and round once to `digits` at the end, so the payment is 1330.60. `payment` tracks (1 + rate)^periods − 1 itself, which keeps its digits for small rates, and divides the rate by it before multiplying by the principal, so a principal × rate too small for 28 places no longer makes the payment 0 (0.001 at `1.2e-27` for one period at 3 places is now 0.001, not 0.000), and `effective_annual_rate` divides the nominal rate the same way, so 5% compounded 1200 times a year is 0.051270 instead of 0.051312, and 365 times is 0.051267 instead of 0.051273. For the monthly rates of 1% to 20% a year over 360 and 1200 months, the payment and every schedule row now equal Python's `decimal`. The unrounded payment is within about periods × 1e-15 of the exact one, relative to the larger of the payment and principal × rate, so only a payment that close to a half-unit at `digits` places can still round the other way.
