@@ -7,6 +7,8 @@ and this project is expected to follow [Semantic Versioning](https://semver.org/
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-11-23
+
 ### Breaking
 
 - `decimal.add` and `subtract` no longer return the other operand unchanged when one is zero. The sum takes the smaller of the two exponents, as every other sum does and as in Python's `decimal`, so `0.00 + 5` is `5.00` and `200000 - 0.00` is `200000.00`. A value that cannot take more places keeps its own, as before for any sum (`0e-28 + 9007199254740991` is `9007199254740991`). The value is unchanged, but `to_string` and `==` see the new exponent. An `interest.schedule` row whose principal paid is exactly zero now shows a balance of `200000.00` like the rows around it, instead of `200000`, and `money.add(USD 0.00, x)` gives `x` at two places.
