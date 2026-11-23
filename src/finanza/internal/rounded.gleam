@@ -13,18 +13,7 @@ import gleam/list
 import gleam/result
 
 import finanza/decimal.{type Decimal, type RoundingMode}
-
-// 2^53 - 1, the bound on a coefficient in finanza/decimal.
-const max_safe_coefficient: Int = 9_007_199_254_740_991
-
-// Base of the limbs a product is computed in. Every coefficient is
-// below 10^16, so it splits into three limbs, the top one at most 90.
-// A product of two limbs is below 10^14, and a sum of three of them
-// plus a carry stays below 2^53, so both targets compute every step
-// exactly.
-const limb_base: Int = 10_000_000
-
-const limb_digits: Int = 7
+import finanza/internal/limb
 
 /// Returns `a × b` rounded to `digits` places after the decimal point,
 /// with the same result as `decimal.round` gives for the exact product.
@@ -51,7 +40,7 @@ pub fn multiply(
   let exponent = decimal.exponent(a) + decimal.exponent(b)
   // A product within 2^53 - 1 whose exponent is in range is a Decimal
   // already, so `decimal.round` rounds it.
-  let small = case left == 0 || left <= max_safe_coefficient / right {
+  let small = case left == 0 || left <= limb.max_safe_coefficient / right {
     True ->
       decimal.new(
         coefficient: decimal.coefficient(a) * decimal.coefficient(b),
@@ -65,7 +54,12 @@ pub fn multiply(
       decimal.new(coefficient: 0, exponent: -digits)
       |> result.replace_error(decimal.PrecisionExceeded)
     Error(Nil), False ->
-      round_digits(product_digits(left, right), -digits - exponent, sign, mode)
+      round_digits(
+        limb.product_digits(left, right),
+        -digits - exponent,
+        sign,
+        mode,
+      )
       |> result.try(fn(coefficient) {
         decimal.new(coefficient:, exponent: -digits)
         |> result.replace_error(decimal.PrecisionExceeded)
@@ -88,7 +82,7 @@ fn round_digits(
     False -> list.split(digits, dropped)
   }
   use quotient <- result.try(
-    digits_value(kept) |> result.replace_error(decimal.PrecisionExceeded),
+    limb.digits_value(kept) |> result.replace_error(decimal.PrecisionExceeded),
   )
   // Past the end of the list the removed digits are zeros, so the
   // leading one is 0 when the list ran out before `dropped`.
@@ -125,54 +119,4 @@ fn rounding_step(
   )
   use rounded <- result.map(decimal.round(stand_in, digits: 0, rounding: mode))
   int.absolute_value(decimal.coefficient(rounded)) - parity
-}
-
-// `digits_value`, `product_digits` and the limb constants are the same
-// as in finanza/decimal, which cannot import them from here because this
-// module imports it. Change both together.
-
-// The value of digits listed least significant first, or `Error(Nil)`
-// when it passes 2^53 - 1. Each step checks before it multiplies, so no
-// intermediate value passes 2^53 - 1 either.
-fn digits_value(digits: List(Int)) -> Result(Int, Nil) {
-  digits
-  |> list.reverse
-  |> list.try_fold(0, fn(value, digit) {
-    case value > { max_safe_coefficient - digit } / 10 {
-      True -> Error(Nil)
-      False -> Ok(value * 10 + digit)
-    }
-  })
-}
-
-// The exact product of two magnitudes within 2^53 - 1, as its 35
-// decimal digits, the least significant first.
-fn product_digits(a: Int, b: Int) -> List(Int) {
-  let #(a0, a1, a2) = split_limbs(a)
-  let #(b0, b1, b2) = split_limbs(b)
-  let c0 = a0 * b0
-  let c1 = a0 * b1 + a1 * b0 + c0 / limb_base
-  let c2 = a0 * b2 + a1 * b1 + a2 * b0 + c1 / limb_base
-  let c3 = a1 * b2 + a2 * b1 + c2 / limb_base
-  // At most 90 × 90 plus a carry of at most 181, so below the base.
-  let c4 = a2 * b2 + c3 / limb_base
-  [c0, c1, c2, c3]
-  |> list.map(fn(limb) { limb % limb_base })
-  |> list.append([c4])
-  |> list.flat_map(limb_to_digits(_, limb_digits))
-}
-
-fn split_limbs(value: Int) -> #(Int, Int, Int) {
-  #(
-    value % limb_base,
-    value / limb_base % limb_base,
-    value / { limb_base * limb_base },
-  )
-}
-
-fn limb_to_digits(limb: Int, count: Int) -> List(Int) {
-  case count {
-    0 -> []
-    _ -> [limb % 10, ..limb_to_digits(limb / 10, count - 1)]
-  }
 }

@@ -36,6 +36,8 @@ import gleam/order
 import gleam/result
 import gleam/string
 
+import finanza/internal/limb
+
 /// A fixed-point decimal number.
 ///
 pub opaque type Decimal {
@@ -99,7 +101,7 @@ pub type ArithmeticError {
   PrecisionExceeded
 }
 
-const max_safe_coefficient: Int = 9_007_199_254_740_991
+const max_safe_coefficient: Int = limb.max_safe_coefficient
 
 const min_exponent: Int = -28
 
@@ -301,24 +303,38 @@ type ParseState {
   )
 }
 
+// Reads one character per step. Each step returns the next state and the
+// loop calls itself last, so it runs in constant stack on both targets
+// however long the input is.
 fn parse_loop(state: ParseState) -> Result(Decimal, ParseError) {
   case state.characters {
     [] -> finish_parse(state)
     [character, ..rest] -> {
       let next =
         ParseState(..state, characters: rest, position: state.position + 1)
-      case character {
-        "+" -> parse_sign(state, next, 1)
-        "-" -> parse_sign(state, next, -1)
-        "." -> parse_dot(state, next)
-        _ ->
-          case digit_value(character) {
-            Ok(value) -> parse_digit(next, value)
-            Error(Nil) ->
-              Error(InvalidCharacter(character:, position: state.position))
-          }
+      case parse_character(state, next, character) {
+        Ok(next) -> parse_loop(next)
+        Error(error) -> Error(error)
       }
     }
+  }
+}
+
+fn parse_character(
+  state: ParseState,
+  next: ParseState,
+  character: String,
+) -> Result(ParseState, ParseError) {
+  case character {
+    "+" -> parse_sign(state, next, 1)
+    "-" -> parse_sign(state, next, -1)
+    "." -> parse_dot(state, next)
+    _ ->
+      case digit_value(character) {
+        Ok(value) -> Ok(parse_digit(next, value))
+        Error(Nil) ->
+          Error(InvalidCharacter(character:, position: state.position))
+      }
   }
 }
 
@@ -335,23 +351,23 @@ fn parse_sign(
   state: ParseState,
   next: ParseState,
   sign: Int,
-) -> Result(Decimal, ParseError) {
+) -> Result(ParseState, ParseError) {
   use <- bool.guard(
     when: state.position != 0 || state.saw_sign,
     return: Error(MultipleSigns),
   )
-  parse_loop(ParseState(..next, sign:, saw_sign: True))
+  Ok(ParseState(..next, sign:, saw_sign: True))
 }
 
 fn parse_dot(
   state: ParseState,
   next: ParseState,
-) -> Result(Decimal, ParseError) {
+) -> Result(ParseState, ParseError) {
   use <- bool.guard(when: state.saw_dot, return: Error(MultipleDecimalPoints))
-  parse_loop(ParseState(..next, saw_dot: True))
+  Ok(ParseState(..next, saw_dot: True))
 }
 
-fn parse_digit(next: ParseState, value: Int) -> Result(Decimal, ParseError) {
+fn parse_digit(next: ParseState, value: Int) -> ParseState {
   let fraction_digits = case next.saw_dot {
     True -> next.fraction_digits + 1
     False -> next.fraction_digits
@@ -362,7 +378,7 @@ fn parse_digit(next: ParseState, value: Int) -> Result(Decimal, ParseError) {
     True -> next.digits
     False -> next.digits * 10 + value
   }
-  parse_loop(ParseState(..next, digits:, fraction_digits:, saw_digit: True))
+  ParseState(..next, digits:, fraction_digits:, saw_digit: True)
 }
 
 fn digit_value(character: String) -> Result(Int, Nil) {
@@ -583,7 +599,7 @@ pub fn multiply(a: Decimal, b: Decimal) -> Result(Decimal, ArithmeticError) {
   use #(magnitude, dropped) <- result.try(
     case left <= max_safe_coefficient / right {
       True -> drop_small_zeros(left * right, at_least)
-      False -> drop_zeros(product_digits(left, right), 0, at_least)
+      False -> drop_zeros(limb.product_digits(left, right), 0, at_least)
     },
   )
   checked(sign * magnitude, exponent + dropped)
@@ -615,68 +631,13 @@ fn drop_zeros(
   at_least: Int,
 ) -> Result(#(Int, Int), ArithmeticError) {
   let value = case dropped >= at_least {
-    True -> digits_value(digits)
+    True -> limb.digits_value(digits)
     False -> Error(Nil)
   }
   case value, digits {
     Ok(value), _ -> Ok(#(value, dropped))
     Error(Nil), [0, ..rest] -> drop_zeros(rest, dropped + 1, at_least)
     Error(Nil), _ -> Error(PrecisionExceeded)
-  }
-}
-
-// The value of digits listed least significant first, or `Error(Nil)`
-// when it passes 2^53 - 1. Each step checks before it multiplies, so no
-// intermediate value passes 2^53 - 1 either.
-fn digits_value(digits: List(Int)) -> Result(Int, Nil) {
-  digits
-  |> list.reverse
-  |> list.try_fold(0, fn(value, digit) {
-    case value > { max_safe_coefficient - digit } / 10 {
-      True -> Error(Nil)
-      False -> Ok(value * 10 + digit)
-    }
-  })
-}
-
-// Base of the limbs a product is computed in. Every coefficient is
-// below 10^16, so it splits into three limbs, the top one at most 90.
-// A product of two limbs is below 10^14, and a sum of three of them
-// plus a carry stays below 2^53, so both targets compute every step
-// exactly.
-const limb_base: Int = 10_000_000
-
-const limb_digits: Int = 7
-
-// The exact product of two magnitudes within 2^53 - 1, as its 35
-// decimal digits, the least significant first.
-fn product_digits(a: Int, b: Int) -> List(Int) {
-  let #(a0, a1, a2) = split_limbs(a)
-  let #(b0, b1, b2) = split_limbs(b)
-  let c0 = a0 * b0
-  let c1 = a0 * b1 + a1 * b0 + c0 / limb_base
-  let c2 = a0 * b2 + a1 * b1 + a2 * b0 + c1 / limb_base
-  let c3 = a1 * b2 + a2 * b1 + c2 / limb_base
-  // At most 90 × 90 plus a carry of at most 181, so below the base.
-  let c4 = a2 * b2 + c3 / limb_base
-  [c0, c1, c2, c3]
-  |> list.map(fn(limb) { limb % limb_base })
-  |> list.append([c4])
-  |> list.flat_map(limb_to_digits(_, limb_digits))
-}
-
-fn split_limbs(value: Int) -> #(Int, Int, Int) {
-  #(
-    value % limb_base,
-    value / limb_base % limb_base,
-    value / { limb_base * limb_base },
-  )
-}
-
-fn limb_to_digits(limb: Int, count: Int) -> List(Int) {
-  case count {
-    0 -> []
-    _ -> [limb % 10, ..limb_to_digits(limb / 10, count - 1)]
   }
 }
 
@@ -963,13 +924,22 @@ fn long_division(
   denominator: Int,
   places: Int,
 ) -> Result(#(Int, Int), ArithmeticError) {
-  use <- bool.guard(when: places <= 0, return: Ok(#(quotient, remainder)))
-  let #(digit, remainder) = times_ten(remainder, denominator, 10, 0, 0)
-  use <- bool.guard(
-    when: quotient > { max_safe_coefficient - digit } / 10,
-    return: Error(PrecisionExceeded),
-  )
-  long_division(quotient * 10 + digit, remainder, denominator, places - 1)
+  case places {
+    _ if places <= 0 -> Ok(#(quotient, remainder))
+    _ -> {
+      let #(digit, remainder) = times_ten(remainder, denominator, 10, 0, 0)
+      case quotient > { max_safe_coefficient - digit } / 10 {
+        True -> Error(PrecisionExceeded)
+        False ->
+          long_division(
+            quotient * 10 + digit,
+            remainder,
+            denominator,
+            places - 1,
+          )
+      }
+    }
+  }
 }
 
 // Returns the quotient and remainder of `value × 10 / modulus`, for
@@ -982,11 +952,12 @@ fn times_ten(
   carries: Int,
   total: Int,
 ) -> #(Int, Int) {
-  use <- bool.guard(when: count == 0, return: #(carries, total))
   let room = modulus - value
-  case total >= room {
-    True -> times_ten(value, modulus, count - 1, carries + 1, total - room)
-    False -> times_ten(value, modulus, count - 1, carries, total + value)
+  case count == 0, total >= room {
+    True, _ -> #(carries, total)
+    False, True ->
+      times_ten(value, modulus, count - 1, carries + 1, total - room)
+    False, False -> times_ten(value, modulus, count - 1, carries, total + value)
   }
 }
 
