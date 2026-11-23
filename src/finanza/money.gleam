@@ -237,7 +237,10 @@ pub fn to_minor(
 
 // Arithmetic -----------------------------------------------------------------
 
-/// Adds two amounts in the same currency.
+/// Adds two amounts in the same currency. The sum keeps the places of
+/// the amount with more of them, so it returns
+/// `ArithmeticFailed(PrecisionExceeded)` when the sum at those places
+/// passes 2^53 − 1, even where `decimal.add` would drop a trailing zero.
 ///
 /// ## Examples
 ///
@@ -252,7 +255,8 @@ pub fn add(a: Money, b: Money) -> Result(Money, MoneyError) {
   combine(a, b, decimal.add)
 }
 
-/// Subtracts `b` from `a`. Both must be in the same currency.
+/// Subtracts `b` from `a`. Both must be in the same currency, and the
+/// difference keeps places the same way as `add`.
 ///
 pub fn subtract(a: Money, b: Money) -> Result(Money, MoneyError) {
   combine(a, b, decimal.subtract)
@@ -271,9 +275,23 @@ fn combine(
       right: b.currency.code,
     )),
   )
-  operation(a.amount, b.amount)
-  |> result.map(Money(_, a.currency))
-  |> result.map_error(ArithmeticFailed)
+  use amount <- result.try(
+    operation(a.amount, b.amount) |> result.map_error(ArithmeticFailed),
+  )
+  // `decimal.add` drops trailing zeros from a sum whose coefficient
+  // passes 2^53 - 1. An amount with fewer places than its operands could
+  // no longer be turned back into minor units, so that is out of range
+  // here. Adding zero returns the other amount unchanged, as before.
+  let places_kept =
+    decimal.is_zero(a.amount)
+    || decimal.is_zero(b.amount)
+    || decimal.exponent(amount)
+    <= int.min(decimal.exponent(a.amount), decimal.exponent(b.amount))
+  use <- bool.guard(
+    when: !places_kept,
+    return: Error(ArithmeticFailed(decimal.PrecisionExceeded)),
+  )
+  Ok(Money(amount, a.currency))
 }
 
 /// Adds up amounts that are all in `currency`. An empty list sums to

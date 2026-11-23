@@ -245,10 +245,11 @@ pub fn ear_5pct_quarterly_test() -> Nil {
 }
 
 pub fn ear_5pct_daily_test() -> Nil {
-  // Textbook: 0.051267. finanza: 0.051273 (drift 6 ppm).
+  // Textbook: 0.051267. Exact match (previously 0.051273, when the rate
+  // per day was divided at 7 places).
   let assert Ok(ear) = interest.effective_annual_rate(d("0.05"), 365, 6)
   decimal.to_string(ear)
-  |> should.equal("0.051273")
+  |> should.equal("0.051267")
 }
 
 pub fn ear_10pct_monthly_test() -> Nil {

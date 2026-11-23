@@ -4,27 +4,34 @@
 //// Rates are per period as decimals, so 0.5% a month is `0.005`. Every
 //// function rounds its result half-even to `digits` places.
 ////
-//// Growth over many periods is computed one period at a time. Results
-//// agree with numpy-financial and spreadsheet functions to the cent for
-//// monthly rates over 30 years. `future_value` and `present_value` work
-//// at `digits + 2` places; `payment`, `effective_annual_rate` and
-//// `schedule` work at 7, so a `digits` above 7 pads with zeros there.
+//// Growth over many periods is computed one period at a time, from the
+//// exact value of `x × (1 + rate)`, so a rate written to 16 places, such
+//// as `0.0041666666666667` for 5% a year over 12 months, is used as it is
+//// even though `1 + rate` does not fit a `Decimal`.
+////
+//// `payment` and `effective_annual_rate` keep every intermediate value
+//// at the most places, up to 28, that fit a `Decimal`, about 16
+//// significant digits, and round once to `digits` at the end;
+//// `effective_annual_rate` divides the nominal rate that way too.
+//// `schedule` pays that payment and rounds each period's interest, the
+//// exact balance times the rate, to `digits`. The unrounded payment is
+//// within about `periods × 1e-15` of the exact one, relative to the
+//// larger of the payment and `principal × rate`, and Python's `decimal`
+//// measured at most 5.3e-14. Only a payment whose exact value is closer
+//// than that to a half-unit at `digits` places can round to the other
+//// neighbour. For monthly rates of 1% to 20% a year over 360 and 1200
+//// months, the payment and every row of the schedule are the same as
+//// Python's `decimal` gives.
+////
+//// `future_value` and `present_value` work at `digits + 2` places, at
+//// least 7. `present_value` divides by `1 + rate`, which has to fit a
+//// `Decimal`. When it does not, as for `0.0041666666666667`, the rate in
+//// it is rounded half-even to the most places at which it does, which is
+//// 15 for a rate between -1 and 1, so the rate moves by at most 5e-16.
 ////
 //// A `Decimal` has at most 28 places, so a `digits` above 28 returns
 //// `DigitsOutOfRange` before any work is done, and `future_value` and
 //// `present_value` work at no more than 28 places.
-////
-//// The growth per period is `1 + rate`, which has to fit a `Decimal` too.
-//// A rate written to 16 places, such as `0.0041666666666667` for 5% a
-//// year over 12 months, makes `1 + rate` a 17-digit coefficient. The
-//// rate in it is then rounded half-even to the most places at which
-//// `decimal.add` computes the sum. A rate between -1 and 1 with 15 places
-//// or fewer is used as it is, and one with more is rounded to 15, so it
-//// moves by at most 5e-16.
-//// `future_value`, `present_value`, `payment` and
-//// `effective_annual_rate` compound with that base; each period's
-//// interest in `schedule` and the numerator of `payment` use the rate as
-//// given.
 ////
 //// The number of periods, and of compounding periods per year, is at
 //// most 1200 (100 years of months). The functions loop once per period in
@@ -78,7 +85,8 @@ pub type Period {
 
 const max_periods: Int = 1200
 
-const max_work_digits: Int = 7
+// The fewest places future_value and present_value work at.
+const min_growth_digits: Int = 7
 
 // The most places a Decimal has, from the range in finanza/decimal.
 const max_digits: Int = 28
@@ -113,7 +121,12 @@ pub fn simple(
     Ok(scaled) ->
       rounded.multiply(scaled, rate, digits:, rounding: decimal.HalfEven)
     Error(decimal.PrecisionExceeded) | Error(decimal.DivisionByZero) -> {
-      use product <- result.try(multiply_at_most(principal, rate, max_digits))
+      use product <- result.try(rounded.multiply_add(
+        principal,
+        rate,
+        plus: [],
+        at_most: max_digits,
+      ))
       rounded.multiply(product, periods, digits:, rounding: decimal.HalfEven)
     }
   }
@@ -144,11 +157,11 @@ pub fn future_value(
   use _ <- result.try(check_rate(rate))
   use _ <- result.try(check_periods(periods, minimum: 0))
   use _ <- result.try(check_digits(digits))
-  use base <- result.try(one_plus(rate))
-  use grown <- result.try(pow_loop(
-    base: base,
-    exponent: periods,
+  use grown <- result.try(compound(
+    rate: rate,
+    periods: periods,
     accumulator: present,
+    plus_rate: False,
     digits: growth_digits(digits),
   ))
   round_to(grown, digits)
@@ -210,33 +223,58 @@ pub fn payment(
     )
     |> result.map_error(ArithmeticFailed)
   })
-  use growth <- result.try(growth_factor(rate, periods))
-  let quotient = {
-    use inverse <- result.try(decimal.divide(
-      decimal.one(),
-      growth,
-      digits: max_work_digits,
-      rounding: decimal.HalfEven,
+  // At -1, (1 + rate)^-periods divides by zero.
+  use <- bool.guard(
+    when: decimal.equal(rate, decimal.negate(decimal.one())),
+    return: Error(ArithmeticFailed(decimal.DivisionByZero)),
+  )
+  // principal × rate / (1 - (1 + rate)^-periods) is
+  // principal × rate + principal × (rate / growth), where growth is
+  // (1 + rate)^periods - 1. Computing growth itself, rather than
+  // (1 + rate)^periods, keeps its significant digits when the rate is
+  // small. rate / growth is near 1 / periods for a small rate, so it
+  // keeps its significant digits at 28 places even when
+  // principal × rate does not, and every value is kept at the most
+  // places that fit, with one rounding to `digits` at the end.
+  use growth <- result.try(compound(
+    rate: rate,
+    periods: periods,
+    accumulator: decimal.zero(),
+    plus_rate: True,
+    digits: max_digits,
+  ))
+  let amount = {
+    use interest <- result.try(rounded.multiply_add(
+      principal,
+      rate,
+      plus: [],
+      at_most: max_digits,
     ))
-    use denominator <- result.try(decimal.subtract(decimal.one(), inverse))
-    // The exact numerator, or as many of its places as fit. It uses the
-    // rate as given, while `growth` may use it rounded to 15 places (see
-    // `one_plus`). That moves the payment by at most about 2e-10 for the
-    // monthly rates of 1% to 20% over 360 and 1200 periods, and `schedule`
-    // charges the rate as given and clears what is left in its last row.
-    use numerator <- result.try(multiply_at_most(principal, rate, max_digits))
-    // Dividing at more than the working precision would overflow for
-    // ordinary loans and add no accuracy, so pad afterwards instead.
-    decimal.divide(
-      numerator,
-      denominator,
-      digits: int.min(digits, max_work_digits),
-      rounding: decimal.HalfEven,
+    use ratio <- result.try(
+      at_most(max_digits, fn(places) {
+        decimal.divide(rate, growth, digits: places, rounding: decimal.HalfEven)
+      }),
     )
+    use share <- result.try(rounded.multiply_add(
+      principal,
+      ratio,
+      plus: [],
+      at_most: max_digits,
+    ))
+    use amount <- result.try(rounded.multiply_add(
+      share,
+      decimal.one(),
+      plus: [interest],
+      at_most: digits,
+    ))
+    // Fewer places than `digits` fit only when the payment is out of
+    // range at `digits`.
+    case decimal.exponent(amount) == -digits {
+      True -> Ok(amount)
+      False -> Error(decimal.PrecisionExceeded)
+    }
   }
-  quotient
-  |> result.map_error(ArithmeticFailed)
-  |> result.try(round_to(_, digits))
+  result.map_error(amount, ArithmeticFailed)
 }
 
 /// Returns the effective annual rate of a nominal rate compounded
@@ -256,18 +294,26 @@ pub fn effective_annual_rate(
   use _ <- result.try(check_digits(digits))
   use compounds <- result.try(int_to_decimal(compounds_per_year))
   use rate <- result.try(
-    decimal.divide(
-      nominal_rate,
-      compounds,
-      digits: max_work_digits,
-      rounding: decimal.HalfEven,
-    )
+    at_most(max_digits, fn(places) {
+      decimal.divide(
+        nominal_rate,
+        compounds,
+        digits: places,
+        rounding: decimal.HalfEven,
+      )
+    })
     |> result.map_error(ArithmeticFailed),
   )
-  use growth <- result.try(growth_factor(rate, compounds_per_year))
-  decimal.subtract(growth, decimal.one())
-  |> result.map_error(ArithmeticFailed)
-  |> result.try(round_to(_, digits))
+  // (1 + rate)^compounds - 1, computed as such so no digits are lost to
+  // the leading 1.
+  use growth <- result.try(compound(
+    rate: rate,
+    periods: compounds_per_year,
+    accumulator: decimal.zero(),
+    plus_rate: True,
+    digits: max_digits,
+  ))
+  round_to(growth, digits)
 }
 
 /// Returns the amortization schedule of a loan repaid with `payment`
@@ -382,37 +428,20 @@ fn schedule_row(
 
 // Internals ------------------------------------------------------------------
 
-fn growth_factor(
-  rate: Decimal,
-  periods: Int,
-) -> Result(Decimal, InterestError) {
-  use base <- result.try(one_plus(rate))
-  pow_loop(
-    base: base,
-    exponent: periods,
-    accumulator: decimal.one(),
-    digits: max_work_digits,
-  )
-}
-
-// 1 + rate. A coefficient holds about 16 digits, so a rate written to 16
-// places, such as 0.0041666666666667, makes 1 + rate need 17. The rate is
-// tried at its own places first, so a sum `decimal.add` computes is
-// exact. Otherwise the rate is rounded half-even to the most places at
-// which `decimal.add` computes 1 + rate, and then 1 is added exactly.
-// `decimal.add` scales 1 to the rate's places first, and 1 at 16 places
-// is past 2^53 - 1, so a rate with 16 places or more is always rounded,
-// even when the sum, such as 1 + -0.8999999999999999, would fit.
+// 1 + rate, for present_value, which divides by it. A coefficient holds
+// about 16 digits, so a rate written to 16 places, such as
+// 0.0041666666666667, makes 1 + rate need 17. The rate is tried at its
+// own places first, so a sum `decimal.add` computes is exact. Otherwise
+// the rate is rounded half-even to the most places at which 1 + rate
+// fits, and then 1 is added exactly.
 //
 // When the rate keeps one place or more, this equals 1 + rate rounded
 // half-even at that place: adding the integer 1 moves both neighbours by
 // 1, so the distances to them stay the same, and 1 is 10^k units of the
 // k-th place, an even number, so the parity of each neighbour's last
-// digit stays the same too. This holds for a
-// negative rate as well. A rate between -1 and 1 is rounded to no fewer
-// than 15 places, so it moves by at most 5e-16. Every period's growth uses
-// this base; each period's interest in `schedule` and the numerator of
-// `payment` still use the rate as given, which is exact there.
+// digit stays the same too. This holds for a negative rate as well. A
+// rate between -1 and 1 is rounded to no fewer than 15 places, so it
+// moves by at most 5e-16.
 fn one_plus(rate: Decimal) -> Result(Decimal, InterestError) {
   at_most(int.max(0, -decimal.exponent(rate)), fn(places) {
     use rate <- result.try(decimal.round(
@@ -425,26 +454,37 @@ fn one_plus(rate: Decimal) -> Result(Decimal, InterestError) {
   |> result.map_error(ArithmeticFailed)
 }
 
-// accumulator × base^exponent, one multiplication at a time, rounding
-// between steps so the coefficient stays in range. The loop calls itself
-// last, so it runs in constant stack for any exponent.
-fn pow_loop(
-  base base: Decimal,
-  exponent exponent: Int,
+// Applies `periods` periods of growth at `rate` to `accumulator`: each
+// period takes it to `accumulator × (1 + rate)`, plus `rate` when
+// `plus_rate` is set, so that from zero it tracks (1 + rate)^periods - 1.
+// Each period's value is exact before it is rounded half-even at the
+// most places up to `digits` that fit, so `1 + rate` never has to be a
+// Decimal and fast growth loses places instead of failing. The loop
+// calls itself last, so it runs in constant stack for any number of
+// periods.
+fn compound(
+  rate rate: Decimal,
+  periods periods: Int,
   accumulator accumulator: Decimal,
+  plus_rate plus_rate: Bool,
   digits digits: Int,
 ) -> Result(Decimal, InterestError) {
-  case exponent {
-    _ if exponent <= 0 -> Ok(accumulator)
-    // Give up places when the product would otherwise overflow. Fast
-    // growth loses precision instead of failing.
+  let addends = case plus_rate {
+    True -> [accumulator, rate]
+    False -> [accumulator]
+  }
+  case periods {
+    _ if periods <= 0 -> Ok(accumulator)
     _ ->
-      case multiply_at_most(accumulator, base, digits) {
-        Ok(product) ->
-          pow_loop(
-            base: base,
-            exponent: exponent - 1,
-            accumulator: product,
+      case
+        rounded.multiply_add(accumulator, rate, plus: addends, at_most: digits)
+      {
+        Ok(next) ->
+          compound(
+            rate: rate,
+            periods: periods - 1,
+            accumulator: next,
+            plus_rate: plus_rate,
             digits: digits,
           )
         Error(error) -> Error(ArithmeticFailed(error))
@@ -452,7 +492,7 @@ fn pow_loop(
   }
 }
 
-// accumulator ÷ base^exponent, the inverse of pow_loop.
+// accumulator ÷ base^exponent, the inverse of compound.
 fn discount_loop(
   base base: Decimal,
   exponent exponent: Int,
@@ -485,18 +525,6 @@ fn discount_loop(
   }
 }
 
-// Multiplies and rounds half-even at the most places up to `digits`,
-// and no fewer than 0, at which the product does not overflow.
-fn multiply_at_most(
-  a: Decimal,
-  b: Decimal,
-  digits: Int,
-) -> Result(Decimal, decimal.ArithmeticError) {
-  at_most(digits, fn(places) {
-    rounded.multiply(a, b, digits: places, rounding: decimal.HalfEven)
-  })
-}
-
 // Runs `attempt` at the most places up to `digits`, and no fewer than
 // 0, at which it does not overflow.
 fn at_most(
@@ -516,7 +544,7 @@ fn at_most(
 // The places future_value and present_value work at: two more than
 // asked for, at least 7 and at most 28.
 fn growth_digits(digits: Int) -> Int {
-  int.min(max_digits, int.max(max_work_digits, digits + 2))
+  int.min(max_digits, int.max(min_growth_digits, digits + 2))
 }
 
 fn round_to(value: Decimal, digits: Int) -> Result(Decimal, InterestError) {

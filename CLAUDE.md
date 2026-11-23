@@ -29,10 +29,12 @@ src/finanza/
   interest.gleam  # TVM functions and the amortization schedule (Period)
   card.gleam      # PAN: Luhn, brand, MaskOptions and mask, Expiry
   internal/
-    rounded.gleam # multiply-then-round on the exact product, for money
+    rounded.gleam # multiply-then-round on the exact product, and
+                  # multiply-add-then-round for compounding, for money
                   # and interest (internal: not public API, not in docs)
-    limb.gleam    # exact products of two coefficients in 7-digit limbs,
-                  # shared by decimal and rounded (no Decimal dependency)
+    limb.gleam    # exact products and sums of coefficients in 7-digit
+                  # limbs, shared by decimal and rounded (no Decimal
+                  # dependency)
 test/
   finanza_test.gleam   # gleeunit entry
   support.gleam        # let-assert helpers for in-range test inputs
