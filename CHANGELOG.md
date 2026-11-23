@@ -7,6 +7,11 @@ and this project is expected to follow [Semantic Versioning](https://semver.org/
 
 ## [Unreleased]
 
+### Fixed
+
+- `decimal.multiply` returned `PrecisionExceeded` whenever the two coefficients multiplied past 2^53 − 1, even when the product fits once its trailing zeros are dropped. `900719925474100e-14 × 10e-15` is now `900719925474100e-28` and `4503599627370496 × 0.10` is `450359962737049.6`. The product is computed exactly in limbs of seven digits on both targets, then drops the fewest trailing zeros that bring the exponent to -28 or more and the coefficient within 2^53 − 1. A product that still needs more digits, such as `1000.01 × 1e-27`, is `PrecisionExceeded` as before.
+- `interest.future_value`, `payment`, `effective_annual_rate` and `schedule` rounded the running value until the raw coefficients multiplied within 2^53 − 1, so a rate written with trailing zeros lost places or failed. `future_value` of 1,000,000 at `0.05000000` for 120 periods returned `ArithmeticFailed(PrecisionExceeded)`; it now returns `348911985.67`, the same as at `0.05`.
+
 ## [0.13.0] - 2026-11-23
 
 ### Breaking
