@@ -1,5 +1,5 @@
-//// Exact products and sums of coefficients, for `finanza/decimal` and
-//// `finanza/internal/rounded`.
+//// Exact arithmetic on non-negative integers of any size, for
+//// `finanza/decimal` and `finanza/internal/rounded`.
 ////
 //// A coefficient is within 2^53 − 1, so the product of two, or a sum
 //// after one is scaled to the other's exponent, can pass what JavaScript
@@ -214,5 +214,162 @@ fn compare(a: List(Int), b: List(Int)) -> order.Order {
     [x, ..a], [y, ..b] if x == y -> compare(a, b)
     [x, ..], [y, ..] -> int.compare(x, y)
     _, _ -> order.Eq
+  }
+}
+
+/// The exact product of two limb lists of any length. Each step adds one
+/// limb product, below 10^14, and a carry to a limb, so every value
+/// stays below 2^53.
+///
+pub fn multiply(a: List(Int), b: List(Int)) -> List(Int) {
+  // One row per limb of the shorter operand, each as long as the longer.
+  case list.length(a) <= list.length(b) {
+    True -> multiply_rows(a, b, 0, [])
+    False -> multiply_rows(b, a, 0, [])
+  }
+}
+
+// Adds `limb × b`, shifted by `offset` limbs, to `total` for each limb
+// of `a`.
+fn multiply_rows(
+  a: List(Int),
+  b: List(Int),
+  offset: Int,
+  total: List(Int),
+) -> List(Int) {
+  case a {
+    [] -> trim(total)
+    [0, ..rest] -> multiply_rows(rest, b, offset + 1, total)
+    [limb, ..rest] ->
+      multiply_rows(
+        rest,
+        b,
+        offset + 1,
+        add_scaled(total, b, limb, offset, 0, []),
+      )
+  }
+}
+
+// `total + b × factor × base^skip` in one pass: the first `skip` limbs of
+// `total` are kept, and each later step adds a limb of `total`, a limb
+// product below 10^14 and a carry, so every value stays below 2^53.
+// `sum` collects the limbs most significant first.
+fn add_scaled(
+  total: List(Int),
+  b: List(Int),
+  factor: Int,
+  skip: Int,
+  carry: Int,
+  sum: List(Int),
+) -> List(Int) {
+  case skip > 0, total, b {
+    True, [limb, ..total], _ ->
+      add_scaled(total, b, factor, skip - 1, carry, [limb, ..sum])
+    True, [], _ -> add_scaled([], b, factor, skip - 1, carry, [0, ..sum])
+    False, [limb, ..total], [digit, ..b] -> {
+      let value = limb + digit * factor + carry
+      add_scaled(total, b, factor, 0, value / limb_base, [
+        value % limb_base,
+        ..sum
+      ])
+    }
+    False, [], [digit, ..b] -> {
+      let value = digit * factor + carry
+      add_scaled([], b, factor, 0, value / limb_base, [value % limb_base, ..sum])
+    }
+    False, [limb, ..total], [] -> {
+      let value = limb + carry
+      add_scaled(total, [], factor, 0, value / limb_base, [
+        value % limb_base,
+        ..sum
+      ])
+    }
+    False, [], [] ->
+      case carry {
+        0 -> list.reverse(sum)
+        _ -> list.reverse([carry, ..sum])
+      }
+  }
+}
+
+/// `a - b` for `a >= b`, without leading zero limbs.
+///
+pub fn subtract(a: List(Int), b: List(Int)) -> List(Int) {
+  let length = int.max(list.length(a), list.length(b))
+  trim(borrow_subtract(pad(a, length), pad(b, length), 0, []))
+}
+
+/// Compares two limb lists by value, whatever their lengths.
+///
+pub fn compare_values(a: List(Int), b: List(Int)) -> order.Order {
+  let left = trim(a)
+  let right = trim(b)
+  case int.compare(list.length(left), list.length(right)) {
+    order.Eq -> compare(list.reverse(left), list.reverse(right))
+    other -> other
+  }
+}
+
+/// The limbs of digits listed least significant first.
+///
+pub fn from_digits(digits: List(Int)) -> List(Int) {
+  digits
+  |> list.sized_chunk(into: limb_digits)
+  |> list.map(fn(chunk) {
+    list.fold(list.reverse(chunk), 0, fn(value, digit) { value * 10 + digit })
+  })
+  |> trim
+}
+
+/// The quotient and remainder of `a / b`, for a non-zero `b`, by long
+/// division one decimal digit at a time. The remainder starts from the
+/// leading digits of `a` that are fewer than those of `b`, so each of the
+/// remaining steps adds one digit to the quotient, and each subtracts
+/// `b` at most nine times.
+///
+pub fn divide(a: List(Int), b: List(Int)) -> #(List(Int), List(Int)) {
+  let divisor = trim(b)
+  let leading =
+    a
+    |> to_digits
+    |> list.reverse
+    |> list.drop_while(fn(digit) { digit == 0 })
+  let width = significant(to_digits(divisor)) - 1
+  case list.length(leading) <= width {
+    True -> #([], trim(a))
+    False -> {
+      let #(head, rest) = list.split(leading, width)
+      divide_digits(rest, divisor, from_digits(list.reverse(head)), [])
+    }
+  }
+}
+
+// `quotient` collects the quotient digits, the latest, least significant
+// one first.
+fn divide_digits(
+  digits: List(Int),
+  divisor: List(Int),
+  remainder: List(Int),
+  quotient: List(Int),
+) -> #(List(Int), List(Int)) {
+  case digits {
+    [] -> #(from_digits(quotient), remainder)
+    [digit, ..rest] -> {
+      let #(count, remainder) =
+        subtract_while(trim(scale(remainder, 10, digit, [])), divisor, 0)
+      divide_digits(rest, divisor, remainder, [count, ..quotient])
+    }
+  }
+}
+
+fn subtract_while(
+  value: List(Int),
+  divisor: List(Int),
+  count: Int,
+) -> #(Int, List(Int)) {
+  case compare_values(value, divisor) {
+    order.Lt -> #(count, value)
+    order.Eq | order.Gt ->
+      subtract_while(subtract(value, divisor), divisor, count + 1)
   }
 }

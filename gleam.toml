@@ -93,6 +93,20 @@ unwrap_used = "error"
   "thrown_away_error",
   "unused_exports",
 ]
+# The differential test against Python's decimal maps every result to
+# text, so it reads errors without propagating them.
+"test/differential/*.gleam" = [
+  "assert_ok_pattern",
+  "deep_nesting",
+  "discarded_result",
+  "label_possible",
+  "missing_labels",
+  "missing_type_annotation",
+  "prefer_guard_clause",
+  "short_variable_name",
+  "thrown_away_error",
+  "unused_exports",
+]
 # Decimal and interest code uses the usual short names for operands
 # (a, b).
 "src/finanza/decimal.gleam" = ["short_variable_name"]

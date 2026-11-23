@@ -21,15 +21,10 @@
 //// pays the payment, and the last pays what is left. Every value is
 //// asserted exactly, with no tolerance.
 ////
-//// What can still differ: `payment` keeps (1 + rate)^periods − 1 to
-//// about 16 significant digits at each period, so the unrounded payment
-//// can be off the exact one by about periods × 1e-15 of the larger of the
-//// payment and principal × rate. Python measured at most 1.1e-15 for the
-//// cases below and 5.3e-14 for random rates, principals and periods. A
-//// payment whose exact value is closer than that to a half-unit at
-//// `digits` places can round the other way. The closest case below is 7%
-//// over 360 months, 9.6e-6 from a half-cent, and at 6 places every case
-//// is at least 1.1e-7 from a half-unit.
+//// Since 0.14.0 `payment` rounds the exact value once, so no payment
+//// can round the other way however close it is to a half-unit;
+//// `test/property/interest_oracle_test.gleam` checks that against exact
+//// fractions.
 
 import gleam/list
 import gleam/result

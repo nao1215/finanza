@@ -65,7 +65,7 @@ fn pow10(n: Int) -> Int {
 
 // The exact sum at the smaller exponent, then the fewest trailing zeros
 // dropped that bring the coefficient within 2^53 - 1, computed with
-// Erlang's bignums. Adding zero returns the other operand.
+// Erlang's bignums. Zero follows the same rule, as in Python's decimal.
 @target(erlang)
 fn oracle(
   a: decimal.Decimal,
@@ -77,9 +77,7 @@ fn oracle(
   }
   case decimal.is_zero(a), decimal.is_zero(b) {
     True, True -> Ok(#(0, exponent))
-    True, False -> Ok(#(decimal.coefficient(b), decimal.exponent(b)))
-    False, True -> Ok(#(decimal.coefficient(a), decimal.exponent(a)))
-    False, False -> {
+    _, _ -> {
       let total =
         decimal.coefficient(a)
         * pow10(decimal.exponent(a) - exponent)

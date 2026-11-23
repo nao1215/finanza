@@ -7,6 +7,23 @@ and this project is expected to follow [Semantic Versioning](https://semver.org/
 
 ## [Unreleased]
 
+### Breaking
+
+- `decimal.add` and `subtract` no longer return the other operand unchanged when one is zero. The sum takes the smaller of the two exponents, as every other sum does and as in Python's `decimal`, so `0.00 + 5` is `5.00` and `200000 - 0.00` is `200000.00`. A value that cannot take more places keeps its own, as before for any sum (`0e-28 + 9007199254740991` is `9007199254740991`). The value is unchanged, but `to_string` and `==` see the new exponent. An `interest.schedule` row whose principal paid is exactly zero now shows a balance of `200000.00` like the rows around it, instead of `200000`, and `money.add(USD 0.00, x)` gives `x` at two places.
+- `money.from_minor`, `to_minor`, `multiply`, `divide`, `sum` and `allocate` return `ArithmeticFailed(PrecisionExceeded)` for a hand-built `Currency` whose exponent is negative, as they already did above 28; before, `from_minor(5, in: Currency(.., exponent: -1, ..))` was 50. `money.format` renders the amount of a currency with an exponent outside 0 to 28 as stored instead of rounding it, so a currency with the exponent 1,000,000 no longer makes a string of a million zeros.
+- `decimal.parse` accepts a value whose exponent as written is out of range when it is in range once its trailing zeros go, and returned `ParsedValueTooLarge` for it before, such as `"0.10000000000000000000000000000"` (29 places) and `"9007199254740991.0"`: it drops the fewest trailing zeros that bring the value into range, the same rule `add` and `multiply` follow, so these are `0.1000000000000000` and `9007199254740991`, and a zero gets its exponent moved into -28 to 15 (`"0e-40"` is zero at 28 places), as `multiply` does. A value that is in range as written keeps its exponent, and `"1e-29"` and `"1e16"` are still `ParsedValueTooLarge`. Code that used `ParsedValueTooLarge` to reject more than 28 written places has to count the places itself.
+
+### Fixed
+
+- `interest.future_value` and `present_value` worked at `digits + 2` places (at least 7), `present_value` rounded a 16-place rate to 15 in `1 + rate`, and `payment` and `effective_annual_rate` kept about 16 significant digits at each period, so a result could round the other way: `future_value` of 1,310,186.18 at `0.0129583333` over 120 periods at 6 places was `6142183.768939` against an exact `6142183.768940`, and 1,000 discounted at `0.0041666666666667` over 360 periods at 12 places was `223.826595641325` against `223.826595641349`. All four now round the exact value once. The exact value of `(1 + rate)^periods` can have thousands of digits, so it is first bounded from both sides with about 35 and then 70 significant digits, and computed in full only when the bounds round differently, as for a tie. On JavaScript a 360-period `payment` at `0.005` takes about 0.35 to 0.7 ms instead of 2.3 to 4.5 ms, and over 1200 periods 0.5 to 1.0 ms instead of 7 to 14 ms; `present_value` is somewhat slower than before (0.44 to 0.92 ms against 0.33 to 0.61 ms for 360 periods at a 16-place rate) because it no longer rounds the rate.
+- `interest.simple` rounded principal × rate to about 16 digits before multiplying by the periods when principal × periods did not fit a `Decimal`, so 8,007,199,254,740.997 at `0.0041666666666667` over 1200 periods was `40035996273705.30` against an exact `40035996273705.31`. It now rounds the exact product once.
+- The last row of `interest.schedule` added the interest and the balance with `decimal.add`, so a sum past 2^53 − 1 at `digits` places came back with fewer places. Every sum in a row now returns `ArithmeticFailed(PrecisionExceeded)` instead. The `finanza/interest` documentation now says that the result of `simple`, `future_value`, `present_value`, `payment` and `effective_annual_rate` has exactly `digits` places and that a result that does not fit there is an error, as for a payment of 1,199.10 at 20 places, and that a schedule keeps the places of a principal with more than `digits`.
+- The `decimal.multiply` documentation names `1000.01 × 1e-27` as a product that is `PrecisionExceeded` because it has a non-zero digit past 28 places, and says that `multiply` never rounds.
+
+### Added
+
+- `test/differential/python_test.gleam` runs about 2,950 cases generated from Python's `decimal` at 200 digits by `scripts/python_differential.py` on both targets: `parse`, `to_string`, `add`, `subtract`, `multiply`, `divide`, `round` and `compare` in every rounding mode, and every interest function. On Erlang, `test/property/interest_oracle_test.gleam` compares the interest functions with exact fractions for random inputs.
+
 ## [0.13.4] - 2026-11-23
 
 ### Fixed

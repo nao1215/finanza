@@ -21,8 +21,10 @@ const max_safe_integer: Int = 9_007_199_254_740_991
 /// unit (2 for cents, 0 for yen), its symbol and its English name.
 ///
 /// The exponent must be between 0 and 28, the places a `Decimal` can
-/// have; `from_minor`, `to_minor`, `sum` and `allocate` return
-/// `ArithmeticFailed(PrecisionExceeded)` for a currency outside it.
+/// have. `Currency` is a plain record, so this is checked where the
+/// exponent is used: `from_minor`, `to_minor`, `multiply`, `divide`,
+/// `sum` and `allocate` return `ArithmeticFailed(PrecisionExceeded)` for
+/// a currency outside it, and `format` renders the amount as stored.
 ///
 pub type Currency {
   Currency(code: String, exponent: Int, symbol: String, name: String)
@@ -206,6 +208,10 @@ pub fn from_minor(
   units: Int,
   in currency: Currency,
 ) -> Result(Money, MoneyError) {
+  use <- bool.guard(
+    when: !valid_exponent(currency),
+    return: Error(ArithmeticFailed(decimal.PrecisionExceeded)),
+  )
   decimal.new(coefficient: units, exponent: -currency.exponent)
   |> result.replace_error(ArithmeticFailed(decimal.PrecisionExceeded))
   |> result.map(Money(_, currency))
@@ -230,9 +236,18 @@ pub fn to_minor(
   money: Money,
   rounding mode: decimal.RoundingMode,
 ) -> Result(Int, MoneyError) {
+  use <- bool.guard(
+    when: !valid_exponent(money.currency),
+    return: Error(ArithmeticFailed(decimal.PrecisionExceeded)),
+  )
   decimal.round(money.amount, digits: money.currency.exponent, rounding: mode)
   |> result.map(decimal.coefficient)
   |> result.map_error(ArithmeticFailed)
+}
+
+// Whether the currency's exponent is within 0 to 28.
+fn valid_exponent(currency: Currency) -> Bool {
+  currency.exponent >= 0 && currency.exponent <= 28
 }
 
 // Arithmetic -----------------------------------------------------------------
@@ -281,7 +296,9 @@ fn combine(
   // `decimal.add` drops trailing zeros from a sum whose coefficient
   // passes 2^53 - 1. An amount with fewer places than its operands could
   // no longer be turned back into minor units, so that is out of range
-  // here. Adding zero returns the other amount unchanged, as before.
+  // here. A zero operand is exempt: the sum then takes the zero's places
+  // where they fit, and otherwise as many as fit, so adding zero to an
+  // amount near 2^53 - 1 minor units does not fail.
   let places_kept =
     decimal.is_zero(a.amount)
     || decimal.is_zero(b.amount)
@@ -312,7 +329,7 @@ pub fn sum(
 /// in the `Decimal` range: `USD 1234.57 × 1.234567890123456` is
 /// `USD 1524.16` with `HalfEven`. Returns
 /// `Error(ArithmeticFailed(PrecisionExceeded))` when the rounded amount
-/// is out of range, or the currency's exponent is outside -15 to 28.
+/// is out of range, or the currency's exponent is outside 0 to 28.
 ///
 /// ## Examples
 ///
@@ -329,6 +346,10 @@ pub fn multiply(
   by factor: decimal.Decimal,
   rounding mode: decimal.RoundingMode,
 ) -> Result(Money, MoneyError) {
+  use <- bool.guard(
+    when: !valid_exponent(money.currency),
+    return: Error(ArithmeticFailed(decimal.PrecisionExceeded)),
+  )
   rounded.multiply(
     money.amount,
     factor,
@@ -341,13 +362,18 @@ pub fn multiply(
 
 /// Divides the amount by `divisor` and rounds the quotient to the
 /// currency's minor unit. Use `allocate` to split a bill without losing
-/// the remainder.
+/// the remainder. Returns `Error(ArithmeticFailed(PrecisionExceeded))`
+/// when the currency's exponent is outside 0 to 28.
 ///
 pub fn divide(
   money: Money,
   by divisor: decimal.Decimal,
   rounding mode: decimal.RoundingMode,
 ) -> Result(Money, MoneyError) {
+  use <- bool.guard(
+    when: !valid_exponent(money.currency),
+    return: Error(ArithmeticFailed(decimal.PrecisionExceeded)),
+  )
   decimal.divide(
     money.amount,
     divisor,
@@ -490,6 +516,11 @@ pub fn to_string(money: Money) -> String {
 
 /// Renders the amount for display.
 ///
+/// With `round_to_minor_units`, the amount is rounded half-even to the
+/// currency's exponent. A hand-built currency whose exponent is outside
+/// 0 to 28 has no minor unit a `Decimal` can hold, so its amount is
+/// rendered as stored, as with `round_to_minor_units: False`.
+///
 /// ## Examples
 ///
 /// ```gleam
@@ -507,7 +538,9 @@ pub fn to_string(money: Money) -> String {
 /// ```
 ///
 pub fn format(money: Money, with options: FormatOptions) -> String {
-  let #(amount, padding) = case options.round_to_minor_units {
+  let #(amount, padding) = case
+    options.round_to_minor_units && valid_exponent(money.currency)
+  {
     True -> round_for_display(money, options.decimal_separator)
     False -> #(money.amount, "")
   }
