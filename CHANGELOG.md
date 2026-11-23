@@ -7,6 +7,11 @@ and this project is expected to follow [Semantic Versioning](https://semver.org/
 
 ## [Unreleased]
 
+### Fixed
+
+- `money.multiply` built the exact product with `decimal.multiply` before rounding it to the currency's minor unit, so it returned `ArithmeticFailed(PrecisionExceeded)` whenever the exact product did not fit a `Decimal`, even when the rounded amount did. `USD 1234.57 × 1.234567890123456` is now `USD 1524.16` with `HalfEven`, and `USD 1000.01 × 1e-27` is `USD 0.00`. The exact product is rounded directly in the given mode, and only the rounded amount has to be within the range. This lifts the limitation noted for 0.13.1, where such products were still `PrecisionExceeded`. `decimal.multiply` is unchanged and still returns the exact product or `PrecisionExceeded`.
+- `interest.simple`, `payment` and `schedule` failed the same way when the principal times the rate did not fit a `Decimal`, as with 123,456.78 at a monthly rate of `0.004166666666667`. `simple` and each period's interest in `schedule` now round the exact product half-even to `digits`, and `payment` keeps as many places of the numerator as fit before dividing. `future_value`, `effective_annual_rate` and `payment` compound by rounding each period's exact product, instead of rounding the running value first and multiplying it exactly.
+
 ## [0.13.1] - 2026-11-23
 
 ### Fixed

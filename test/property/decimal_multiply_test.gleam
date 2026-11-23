@@ -72,7 +72,9 @@ fn coefficient_generator() -> Generator(Int) {
   ])
 }
 
-fn decimal_generator() -> Generator(decimal.Decimal) {
+/// Decimals across the whole range, often with products past 2^53.
+/// Also used by `test/property/rounded_multiply_test.gleam`.
+pub fn decimal_generator() -> Generator(decimal.Decimal) {
   generator.map2(
     coefficient_generator(),
     generator.int(range.constant(-28, 15)),
