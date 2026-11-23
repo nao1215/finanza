@@ -7,6 +7,66 @@ and this project is expected to follow [Semantic Versioning](https://semver.org/
 
 ## [Unreleased]
 
+### Breaking
+
+The public API shrinks from 8 modules to 4: `finanza/decimal`, `finanza/money`, `finanza/interest` and `finanza/card`. Only `Decimal` stays opaque; the other types are plain records that you build and read directly.
+
+- `finanza/decimal/rounding` moves into `finanza/decimal`: `rounding.Mode` is `decimal.RoundingMode`, and `rounding.HalfEven` is `decimal.HalfEven`. Arguments named `mode:` are now `rounding:`.
+- `decimal.new` and `decimal.from_int` return `Result(Decimal, Nil)` instead of panicking. `try_new`, `try_from_int` and `ConstructError` are removed.
+- `decimal.from_string` is renamed `parse`, and `InvalidCharacter(char:)` is `InvalidCharacter(character:)`.
+- `decimal.round` returns a `Result` and also covers `rescale` (`round(d, digits: 2, ..)` is `rescale(d, -2, ..)`). `rescale`, `truncate` (use `rounding: decimal.Down`), `to_int_truncated`, `to_int_rounded`, `format_checked`, `FormatError` and `max_safe_digits` are removed. `to_int` returns `Error(Nil)` for a value with a fractional part.
+- `finanza/currency` and `finanza/currency/catalog` become `finanza/money`. `Currency`, `Money` and `FormatOptions` are records, so `new_currency`, `new_money`, `code`, `exponent`, `symbol`, `name`, `amount`, `currency_of`, the six `with_*` setters and `equal` are removed. The catalogue functions are constants (`catalog.usd()` is `money.usd`), `catalog.find` is `money.find_currency`, and `catalog.all` is removed. `default_format()` is the constant `default_format`, and its `minor_units` field is `round_to_minor_units`.
+- `CurrencyError` is `MoneyError`. Its `ArithmeticError(error:)` variant is `ArithmeticFailed(decimal.ArithmeticError)`, and `InvalidExponent`, `InvalidCurrencyCode` and `EmptyList` are removed.
+- `money.from_minor` and `from_major` take the currency as `in:` and return a `Result`. `money.multiply` and `divide` take `by:` and `rounding:`, `money.format` takes `with:`, and `money.sum(items, in: currency)` replaces `sum` and `sum_with_zero`; an empty list sums to zero.
+- `finanza/interest/amortization` moves into `finanza/interest`: `interest.schedule` returns a list of `Period` records with the fields `index`, `payment`, `interest`, `principal_paid` and `balance`, and the accessor functions are removed.
+- `interest.simple_interest` is renamed `simple`. `interest.compound_interest` is removed; pass the annual rate divided by the compounding periods to `future_value`. The `NegativeRate` variant, which was never returned, is removed, and `ArithmeticError(error:)` is `ArithmeticFailed(decimal.ArithmeticError)`.
+- In `finanza/card`, `MaskOptions` is a record with the constant `default_mask` and the field `mask_character`, and the `with_*` setters are removed. Expiry dates are `Expiry(month:, year:)` records instead of tuples. `parse_expiry` returns `Result(Expiry, Nil)`, `InvalidExpiry` is removed, and `parse_expiry_with_window` is removed.
+- `finanza.version` is removed, along with the `finanza` module.
+- Labels on a function's first argument are removed, so `card.validate(pan: p)` becomes `card.validate(p)` and `decimal.add(a: x, b: y)` becomes `decimal.add(x, y)`.
+
+Before:
+
+```gleam
+import finanza/currency
+import finanza/currency/catalog
+import finanza/decimal
+import finanza/decimal/rounding
+
+let price = currency.from_minor(9999, catalog.usd())
+let assert Ok(tax) = currency.multiply(price, decimal.new(8, -2))
+currency.format(tax, currency.default_format())
+```
+
+After:
+
+```gleam
+import finanza/decimal
+import finanza/money
+
+let assert Ok(price) = money.from_minor(9999, in: money.usd)
+let assert Ok(rate) = decimal.new(coefficient: 8, exponent: -2)
+let assert Ok(tax) = money.multiply(price, by: rate, rounding: decimal.HalfEven)
+money.format(tax, with: money.default_format)
+```
+
+### Fixed
+
+- `decimal.new(coefficient: 0, exponent: e)` and `decimal.parse("0e999999999")` took time proportional to the exponent. They now return at once.
+- `decimal.add`, `subtract`, `multiply`, `divide` and `round` could return a value outside the range `new` accepts, such as `1e15 × 1e15`, whose text `parse` then rejected. They now return `PrecisionExceeded`.
+- `decimal.divide` returned `PrecisionExceeded` when the divisor had to be scaled out of range although the quotient was below 1, such as `1e-40 / 1` or `0.9000000000000000 / 1` at 0 places. It now rounds the quotient.
+- `interest.effective_annual_rate` ran once per compounding period with no limit, so a huge `compounds_per_year` hung the caller. Values above 1200 now return `CompoundsOutOfRange`.
+- `interest.schedule` with 0 periods returned `Ok([])` without checking the principal, rate and digits. It now checks them first.
+- `decimal.compare`, `round` and `to_int` no longer hang on decimals whose exponents are far apart, such as `1e-1000000`.
+- `money.allocate` gave the leftover minor units to the first slots even when their ratio was 0, so `allocate($0.03, [0, 1, 1])` returned `[$0.01, $0.01, $0.01]`. Zero ratios now get nothing.
+- `money.format` dropped the cents of amounts too large to pad, such as $9,007,199,254,740,991. It now adds the zeros to the text.
+- `card.normalize`, and so `validate`, `mask`, `bin` and `last_four`, kept a `"\r\n"` line break, and `decimal.parse` did not trim one.
+- `money.from_minor` and `from_major` panicked for amounts outside ±9,007,199,254,740,991. They now return an error.
+
+### Removed
+
+- The unused `gleam_regexp` dependency.
+- The Discover rule for 622126 to 622925, which could never match because UnionPay is checked first.
+
 ## [0.11.0] - 2026-11-19
 
 ### Added

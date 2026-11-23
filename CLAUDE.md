@@ -22,61 +22,58 @@ just clean
 ## Repository layout
 
 ```
-src/
-  finanza.gleam                    # version() and top-level entry
-  finanza/
-    decimal.gleam                  # opaque Decimal, arithmetic
-    decimal/
-      rounding.gleam               # Mode enum
-    currency.gleam                 # opaque Currency / Money, FormatOptions
-    currency/
-      catalog.gleam                # 15 hardcoded major currencies
-    interest.gleam                 # TVM functions
-    interest/
-      amortization.gleam           # opaque Period, schedule generator
-    card.gleam                     # PAN: Luhn, brand, mask, expiry
+src/finanza/
+  decimal.gleam   # opaque Decimal, RoundingMode, arithmetic, parse/format
+  money.gleam     # Currency and Money records, the 15 currency constants,
+                  # arithmetic, allocate, FormatOptions and format
+  interest.gleam  # TVM functions and the amortization schedule (Period)
+  card.gleam      # PAN: Luhn, brand, MaskOptions and mask, Expiry
 test/
-  finanza_test.gleam               # main gleeunit entry
-  decimal_test.gleam
-  decimal/rounding_test.gleam
-  currency_test.gleam
-  currency/catalog_test.gleam
-  interest_test.gleam
-  interest/amortization_test.gleam
-  card_test.gleam
-  property/                        # metamon property tests
+  finanza_test.gleam   # gleeunit entry
+  support.gleam        # let-assert helpers for in-range test inputs
+  decimal_test.gleam, money_test.gleam, interest_test.gleam, card_test.gleam
+  readme_test.gleam    # the README examples
+  dig_round*_test.gleam
+  property/            # metamon property tests
 doc/
-  reference/                       # third-party OSS clones (gitignored)
+  reference/           # third-party OSS clones (gitignored)
 ```
+
+There is no `finanza` root module. Each public module is one domain.
 
 ## Design principles
 
-- **Opaque public types** — `Decimal`, `Currency`, `Money`,
-  `FormatOptions`, `MaskOptions`, and `Period` are all `pub opaque`.
-  Construct through smart constructors and inspect through accessors.
-  Use `pub type` only for closed enums (`Brand`, `rounding.Mode`,
-  error variants).
-- **No panics** — every fallible path returns a typed `Result`. The
-  glinter config forbids `panic`, `todo`, and `unwrap`. Division by
-  zero and JS-target precision overflow surface as typed errors.
-- **Explicit rounding** — no operation rounds implicitly. Every
-  function that may round takes a `digits: Int` and a
-  `mode: rounding.Mode`.
-- **No external services** — no exchange-rate fetcher, no live ISO
-  4217 sync, no BIN database. Snapshots only, documented as such.
-- **Cross-target** — Erlang and JavaScript. On JS the decimal
-  coefficient is capped at `Number.MAX_SAFE_INTEGER`; overflow returns
-  `decimal.PrecisionExceeded`.
+- Only `Decimal` is opaque, because its coefficient must stay within
+  2^53 - 1 (also for the integer a positive exponent stands for).
+  Every other type (`Currency`, `Money`, `FormatOptions`,
+  `MaskOptions`, `Period`, `Expiry`) is a plain record that callers
+  build and read directly, with defaults as constants
+  (`money.default_format`, `card.default_mask`). Do not add setters
+  or getters for record fields.
+- No panics. Every fallible path returns a `Result`, and constructors
+  such as `decimal.new` and `money.from_minor` return one too. A
+  function with a single reason to fail returns `Result(a, Nil)`,
+  unless it shares the module's error type so that it chains with
+  `result.try` (`decimal.add`, `money.from_minor`).
+- Explicit rounding. Every arithmetic function that may drop digits
+  takes a `rounding: decimal.RoundingMode`. The exceptions round
+  half-even and say so in their docs: the interest functions,
+  `money.allocate` and `money.format`.
+- No external services: no exchange rates, no live ISO 4217 sync, no
+  BIN database. Snapshots only, documented as such.
+- Cross-target: Erlang and JavaScript give the same results because
+  the 2^53 - 1 bound is enforced on both.
+- One function per job. Do not add `_with`, `try_`, `_checked` or
+  `_or_panic` variants of an existing function.
 
 ## Error handling
 
-- Each module defines a dedicated error ADT — `decimal.ParseError`,
-  `decimal.ArithmeticError`, `currency.CurrencyError`,
-  `interest.InterestError`, `card.ValidationError`.
-- `stringly_typed_error` is forbidden by glinter; always model error
-  variants with their own constructors.
-- Wrap lower-layer errors explicitly (e.g.
-  `interest.InterestError::ArithmeticError(decimal.ArithmeticError)`).
+- `decimal.ParseError`, `decimal.ArithmeticError`, `money.MoneyError`,
+  `interest.InterestError` and `card.ValidationError`.
+- `stringly_typed_error` is forbidden by glinter; model each failure as
+  a variant named after what happened.
+- Wrap lower-layer errors in a variant
+  (`money.ArithmeticFailed(decimal.ArithmeticError)`).
 
 ## Testing strategy
 
@@ -86,7 +83,7 @@ doc/
   Luhn reversibility on appended check digit, PMT × periods ≈ FV.
 - Boundary tests for every rounding mode at `2.5`, `3.5`, `10.005`,
   and negative variants.
-- Round-trip: `to_string` ∘ `from_string` must be the identity on
+- Round-trip: `to_string` ∘ `parse` must be the identity on
   normalized decimals.
 - Reference values: cross-check `payment`, `future_value`,
   `present_value` against numpy-financial / Excel published values.
@@ -96,7 +93,6 @@ doc/
 ## Dependencies
 
 - `gleam_stdlib` — standard library
-- `gleam_regexp` — PAN / decimal string parsing
 - `gleeunit` (dev) — test runner
 - `glinter` (dev) — strict lint (dataprep-style)
 - `metamon` (dev) — property test combinators

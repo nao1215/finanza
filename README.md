@@ -1,9 +1,5 @@
 # finanza
 
-Decimal arithmetic, currency formatting, time-value-of-money, and
-payment-card helpers for Gleam. Runs on the Erlang and JavaScript
-targets.
-
 [![CI](https://github.com/nao1215/finanza/actions/workflows/ci.yml/badge.svg)](https://github.com/nao1215/finanza/actions/workflows/ci.yml)
 [![Gitleaks](https://github.com/nao1215/finanza/actions/workflows/gitleaks.yml/badge.svg)](https://github.com/nao1215/finanza/actions/workflows/gitleaks.yml)
 [![Trivy](https://github.com/nao1215/finanza/actions/workflows/trivy.yml/badge.svg)](https://github.com/nao1215/finanza/actions/workflows/trivy.yml)
@@ -11,209 +7,99 @@ targets.
 [![Hex](https://img.shields.io/hexpm/v/finanza)](https://hex.pm/packages/finanza)
 [![Hex Docs](https://img.shields.io/badge/hex-docs-ffaff3)](https://hexdocs.pm/finanza/)
 [![Hex Downloads](https://img.shields.io/hexpm/dt/finanza)](https://hex.pm/packages/finanza)
-[![License](https://img.shields.io/github/license/nao1215/finanza)](./LICENSE)
+[![License](https://img.shields.io/github/license/nao1215/finanza)](https://github.com/nao1215/finanza/blob/main/LICENSE)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/nao1215/finanza/badge)](https://scorecard.dev/viewer/?uri=github.com/nao1215/finanza)
+
+Decimal numbers, money, interest and payment card helpers for Gleam, on
+the Erlang and JavaScript targets.
 
 ```sh
 gleam add finanza
 ```
 
-## Decimal
+## Usage
+
+Adding sales tax to a price, rounded to the cent:
 
 ```gleam
+import finanza/decimal
+import finanza/money
 import gleam/result
-import finanza/decimal
-import finanza/decimal/rounding
 
-pub fn invoice_total() -> Result(String, decimal.ArithmeticError) {
-  let assert Ok(subtotal) = decimal.from_string("99.99")
-  let assert Ok(rate) = decimal.from_string("0.08")
-  use raw <- result.try(decimal.multiply(subtotal, rate))
-  let tax = decimal.round(raw, 2, rounding.HalfEven)
-  use total <- result.map(decimal.add(subtotal, tax))
-  decimal.to_string(total)
+pub fn price_with_tax() -> Result(String, money.MoneyError) {
+  let assert Ok(price) = money.from_minor(9999, in: money.usd)
+  let assert Ok(rate) = decimal.parse("0.08")
+  use tax <- result.try(money.multiply(price, by: rate, rounding: decimal.HalfEven))
+  use total <- result.map(money.add(price, tax))
+  money.format(total, with: money.default_format)
+  // -> Ok("$107.99")
 }
-// invoice_total() == Ok("107.99")
 ```
 
-```gleam
-import finanza/decimal
-
-decimal.format(
-  d: decimal.new(coefficient: 1_234_567, exponent: -2),
-  thousands: ",",
-  decimal_separator: ".",
-)
-// "12,345.67"
-```
-
-## Money
+Splitting a bill three ways without losing the remainder, and formatting
+for a German invoice:
 
 ```gleam
-import finanza/currency
-import finanza/currency/catalog
-import finanza/decimal
-
-pub fn invoice_line() -> String {
-  currency.new_money(decimal.from_int(200_000), catalog.usd())
-  |> currency.format(currency.default_format())
-}
-// invoice_line() == "$200,000.00"
-```
-
-```gleam
+import finanza/money
 import gleam/list
 import gleam/result
-import finanza/currency
-import finanza/currency/catalog
-import finanza/decimal/rounding
 
-pub fn split_yen_bill() -> Result(List(Int), currency.CurrencyError) {
-  let bill = currency.from_minor(10_000, catalog.jpy())
-  use parts <- result.try(currency.allocate(bill, [1, 1, 1]))
-  parts
-  |> list.map(fn(p) { currency.to_minor(p, rounding.HalfEven) })
-  |> result.all
+pub fn split_bill() -> Result(List(String), money.MoneyError) {
+  let assert Ok(bill) = money.from_minor(100_000, in: money.eur)
+  let german =
+    money.FormatOptions(
+      ..money.default_format,
+      thousands_separator: ".",
+      decimal_separator: ",",
+      symbol_position: money.Suffix,
+    )
+  use parts <- result.map(money.allocate(bill, [1, 1, 1]))
+  list.map(parts, money.format(_, with: german))
+  // -> Ok(["333,34€", "333,33€", "333,33€"])
 }
-// split_yen_bill() == Ok([3334, 3333, 3333])
 ```
 
-```gleam
-import finanza/currency
-import finanza/currency/catalog
-
-pub fn invoice_label_de() -> String {
-  let amount = currency.from_minor(123_456, catalog.eur())
-  let options =
-    currency.default_format()
-    |> currency.with_thousands_separator(".")
-    |> currency.with_decimal_separator(",")
-    |> currency.with_symbol_position(currency.Suffix)
-  currency.format(amount, options)
-}
-// invoice_label_de() == "1.234,56€"
-```
+A monthly mortgage payment and the first row of its schedule:
 
 ```gleam
-import gleam/result
-import finanza/currency
-import finanza/currency/catalog
-import finanza/decimal/rounding
-
-pub fn invoice_total() -> Result(Int, currency.CurrencyError) {
-  let usd = catalog.usd()
-  let line_items = [
-    currency.from_minor(12_000, usd),
-    currency.from_minor(4_500, usd),
-    currency.from_minor(99, usd),
-  ]
-  use total <- result.try(currency.sum(line_items))
-  currency.to_minor(total, rounding.HalfEven)
-}
-// invoice_total() == Ok(16_599)
-```
-
-## Interest
-
-```gleam
-import gleam/result
 import finanza/decimal
 import finanza/interest
 
-pub fn monthly_mortgage() -> Result(String, interest.InterestError) {
-  let assert Ok(principal) = decimal.from_string("200000")
-  let assert Ok(rate) = decimal.from_string("0.005")
-  // 30-year fixed, 360 monthly payments at 0.5%/month.
-  use pmt <- result.map(interest.payment(principal, rate, 360, 2))
-  decimal.to_string(pmt)
+pub fn mortgage() -> #(String, String) {
+  let assert Ok(principal) = decimal.parse("200000")
+  let assert Ok(rate) = decimal.parse("0.005")
+  let assert Ok([first, ..]) =
+    interest.schedule(principal:, rate_per_period: rate, periods: 360, digits: 2)
+  #(decimal.to_string(first.payment), decimal.to_string(first.interest))
+  // -> #("1199.10", "1000.00")
 }
-// monthly_mortgage() == Ok("1199.10")
 ```
 
-```gleam
-import gleam/list
-import gleam/result
-import finanza/decimal
-import finanza/interest/amortization
+Checking and masking a card number:
 
-pub fn first_payment_breakdown() -> Result(#(String, String), Nil) {
-  let assert Ok(principal) = decimal.from_string("1000")
-  let assert Ok(rate) = decimal.from_string("0.01")
-  use rows <- result.try(
-    amortization.schedule(principal, rate, 12, 2)
-    |> result.replace_error(Nil),
-  )
-  use first <- result.map(list.first(rows))
+```gleam
+import finanza/card
+
+pub fn card_details() {
   #(
-    decimal.to_string(amortization.interest(first)),
-    decimal.to_string(amortization.principal_paid(first)),
+    card.validate("4111 1111 1111 1111"),
+    // -> Ok(card.Visa)
+    card.mask("378282246310005", with: card.default_mask),
+    // -> Ok("3782 **** *** 0005")
+    card.parse_expiry("12/28"),
+    // -> Ok(card.Expiry(month: 12, year: 2028))
   )
 }
-// first_payment_breakdown() == Ok(#("10.00", "78.85"))
 ```
 
-## Card
-
-```gleam
-import finanza/card
-
-pub fn check_card(pan: String) -> Result(card.Brand, card.ValidationError) {
-  card.validate(pan)
-}
-// check_card("4111 1111 1111 1111") == Ok(card.Visa)
-// check_card("378282246310005")    == Ok(card.AmericanExpress)
-// check_card("4111111111111112")   == Error(card.InvalidLuhn)
-```
-
-```gleam
-import finanza/card
-
-pub fn safe_display(pan: String) -> Result(String, card.ValidationError) {
-  card.mask(pan, card.default_mask())
-}
-// safe_display("4111111111111111") == Ok("4111 **** **** 1111")
-// safe_display("378282246310005")  == Ok("3782 **** *** 0005")
-```
-
-```gleam
-import finanza/card
-
-pub fn parse_card_expiry(input: String) {
-  card.parse_expiry(input)
-}
-// parse_card_expiry("12/28")   == Ok(#(12, 2028))
-// parse_card_expiry("12/2028") == Ok(#(12, 2028))
-// parse_card_expiry("13/28")   == Error(card.InvalidExpiry)
-```
-
-```gleam
-import finanza/card
-
-pub fn still_valid(month: Int, year: Int) -> Bool {
-  card.expiry_valid(expiry: #(month, year), today: #(5, 2026))
-}
-// still_valid(12, 2028) == True
-// still_valid(5, 2026)  == True
-// still_valid(4, 2026)  == False
-```
+The API reference is on [HexDocs](https://hexdocs.pm/finanza/).
 
 ## Notes
 
-- Currency catalogue and brand IIN ranges are static snapshots from
-  May 2026.
-- JavaScript target: Decimal coefficients are capped at 2^53 − 1.
-  Operations beyond that return `decimal.PrecisionExceeded`.
+- A decimal's coefficient, and the integer a positive exponent stands for, stay within ±9,007,199,254,740,991 (2^53 − 1) on both targets, so results match on Erlang and JavaScript. Larger results are `PrecisionExceeded` errors.
+- The 15 built-in currencies and the card brand rules are snapshots taken in May 2026. There is no exchange rate lookup or BIN database.
 
-## Testing
-
-| Technique | Bug class caught here |
-|---|---|
-| Examples and unit tests | [Wrong values at rounding ties, limits and public test PANs](doc/testing.md#examples-and-unit-tests) |
-| Generated properties | [Broken arithmetic laws, totals that do not add up](doc/testing.md#generated-properties) |
-| Metamorphic relations | [Results that change under scaling or an inverse operation](doc/testing.md#metamorphic-relations) |
-| Differential testing | [Rounding and division that disagree with Python decimal or an integer oracle](doc/testing.md#differential-testing) |
-| Fuzzing | [Parsers that crash on malformed input](doc/testing.md#fuzzing) |
-| Mutation testing | [Assertions that miss a changed operator or branch](doc/testing.md#mutation-testing) |
+How the package is tested is described in [doc/testing.md](https://github.com/nao1215/finanza/blob/main/doc/testing.md).
 
 ## Verifying releases
 
@@ -234,4 +120,4 @@ sha256sum --check checksums.txt
 
 ## License
 
-[MIT](LICENSE)
+[MIT](https://github.com/nao1215/finanza/blob/main/LICENSE)
