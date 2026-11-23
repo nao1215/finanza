@@ -129,11 +129,11 @@ pub fn absolute(value: Number) -> Number {
 /// The exact product.
 ///
 pub fn times(a: Number, b: Number) -> Number {
-  number(
-    a.sign * b.sign,
-    limb.multiply(a.limbs, b.limbs),
-    a.exponent + b.exponent,
-  )
+  // The product of limbs without leading zeros has none either.
+  case limb.multiply(a.limbs, b.limbs) {
+    [] -> Number(1, [], 0)
+    limbs -> Number(a.sign * b.sign, limbs, a.exponent + b.exponent)
+  }
 }
 
 /// The exact sum.
@@ -164,8 +164,99 @@ pub fn truncate(value: Number, limbs count: Int, up up: Bool) -> Number {
         True -> limb.trim(limb.add(#(1, kept), #(1, [1])).1)
         False -> kept
       }
-      number(value.sign, kept, value.exponent + 7 * { length - count })
+      // The kept limbs start at the leading one, which is not zero.
+      Number(value.sign, kept, value.exponent + 7 * { length - count })
     }
+  }
+}
+
+/// The number without the zeros at the end of its digits, with the
+/// exponent raised to match, so that a power of it has no trailing
+/// zeros to carry either.
+///
+pub fn normalize(value: Number) -> Number {
+  let digits = limb.to_digits(value.limbs)
+  case list.length(list.take_while(digits, fn(digit) { digit == 0 })) {
+    0 -> value
+    zeros ->
+      number(
+        value.sign,
+        limb.from_digits(list.drop(digits, zeros)),
+        value.exponent + zeros,
+      )
+  }
+}
+
+/// Returns `True` when the number is below 10^`exponent` in magnitude.
+///
+pub fn below(value: Number, exponent: Int) -> Bool {
+  is_zero(value) || magnitude(value) <= exponent
+}
+
+/// A bound of the number with at most `limbs` limbs: at most the
+/// number, or at least it when `up` is set.
+///
+pub fn bound(value: Number, limbs count: Int, up up: Bool) -> Number {
+  truncate(value, limbs: count, up: up == { value.sign > 0 })
+}
+
+/// A bound of `a + b` with at most `limbs` limbs: at most the exact
+/// sum, or at least it when `up` is set.
+///
+/// When one operand is below the last limb kept of the other, it can
+/// only move the sum by less than one unit of that limb, so it is
+/// replaced by that unit, and the sum is never built in full, however
+/// far apart the exponents are: `10^19000 - 1` costs as much as `2 - 1`.
+///
+pub fn plus_bound(
+  a: Number,
+  b: Number,
+  limbs count: Int,
+  up up: Bool,
+) -> Number {
+  let left = bound(a, limbs: count, up:)
+  let right = bound(b, limbs: count, up:)
+  use <- bool.guard(when: is_zero(left), return: right)
+  use <- bool.guard(when: is_zero(right), return: left)
+  let #(large, small) = case magnitude(left) >= magnitude(right) {
+    True -> #(left, right)
+    False -> #(right, left)
+  }
+  // One limb more than kept, so that a value just past a power of 10^7,
+  // such as 1, still has 7 × `count` digits below its leading one.
+  let wide = widen(large, count + 1)
+  case magnitude(small) <= wide.exponent {
+    // |small| < 10^wide.exponent, so the sum is within one unit of the
+    // last limb of `wide`, on the side of `small`.
+    True ->
+      case up == { small.sign > 0 } {
+        True ->
+          bound(
+            plus(wide, Number(small.sign, [1], wide.exponent)),
+            limbs: count,
+            up:,
+          )
+        False -> large
+      }
+    // Both operands have at most `count` limbs and overlap within about
+    // `count` limbs, so the exact sum has at most about three times
+    // `count` limbs.
+    False -> bound(plus(left, right), limbs: count, up:)
+  }
+}
+
+// The same value written with at least `count` limbs, zeros added at
+// the least significant end.
+fn widen(value: Number, count: Int) -> Number {
+  let missing = count - list.length(value.limbs)
+  case missing > 0 {
+    True ->
+      Number(
+        ..value,
+        limbs: list.append(list.repeat(0, missing), value.limbs),
+        exponent: value.exponent - 7 * missing,
+      )
+    False -> value
   }
 }
 

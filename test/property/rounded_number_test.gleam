@@ -50,6 +50,54 @@ pub fn limb_divide_multiplies_back_test() {
   )
 }
 
+// Limbs near the edges of the base, where a quotient limb estimated
+// from the leading limbs is furthest off, mixed with random ones.
+fn edge_limbs() {
+  generator.list_of(
+    generator.one_of([
+      generator.element_of([0, 1, 2, 4_999_999, 5_000_000, 9_999_998, 9_999_999]),
+      generator.int(range.constant(0, 9_999_999)),
+    ]),
+    range.constant(1, 14),
+  )
+}
+
+fn divides_back(a: List(Int), b: List(Int)) -> Bool {
+  let #(quotient, remainder) = limb.divide(a, b)
+  let back = limb.add(#(1, limb.multiply(quotient, b)), #(1, remainder)).1
+  limb.compare_values(back, a) == order.Eq
+  && limb.compare_values(remainder, b) == order.Lt
+  && limb.trim(quotient) == quotient
+  && limb.trim(remainder) == remainder
+}
+
+/// On both targets, `limb.divide` multiplies back for dividends and
+/// divisors of up to 14 limbs made of edge values such as 9999999 and 1,
+/// and gives a remainder of zero for an exact multiple, where a quotient
+/// limb estimated in floating point can come out one too low.
+pub fn limb_divide_handles_edge_limbs_test() {
+  metamon.forall_with(
+    metamon.with_runs_or_panic(metamon.default_config(), 2000),
+    generator.tuple3(
+      edge_limbs(),
+      edge_limbs(),
+      generator.int(range.constant(1, 9_999_999)),
+    ),
+    fn(input) {
+      let #(a, b, times) = input
+      let b = case limb.trim(b) {
+        [] -> [1]
+        b -> b
+      }
+      let multiple = limb.multiply(b, [times])
+      divides_back(a, b)
+      && limb.divide(limb.multiply(multiple, b), b)
+      == #(limb.trim(multiple), [])
+      && limb.divide(multiple, b) == #([times], [])
+    },
+  )
+}
+
 @target(erlang)
 fn pow10(n: Int) -> Int {
   case n <= 0 {

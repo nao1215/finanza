@@ -4,10 +4,21 @@
 //// bignums and rounds it half-even once, so it runs on Erlang only. The
 //// inputs mix monthly rates, rates with 16 places, negative rates and
 //// principals near the coefficient bound, so that results often land
-//// close to the rounding boundary or past the range.
+//// close to the rounding boundary or past the range. A second set of
+//// inputs makes exact ties, which only the exact value settles, and
+//// checks that `tvm` computes them within its limit.
 
 import finanza/decimal
 import finanza/interest
+
+@target(erlang)
+import finanza/internal/tvm
+@target(erlang)
+import gleam/int
+@target(erlang)
+import gleam/list
+@target(erlang)
+import gleam/order
 
 @target(erlang)
 import metamon
@@ -301,4 +312,263 @@ pub fn effective_annual_rate_matches_the_exact_oracle_test() {
       == expected
     },
   )
+}
+
+// --- ties ---------------------------------------------------------------------
+
+@target(erlang)
+fn gcd(a: Int, b: Int) -> Int {
+  case b == 0 {
+    True -> int.absolute_value(a)
+    False -> gcd(b, a % b)
+  }
+}
+
+@target(erlang)
+fn strip(n: Int, prime: Int, count: Int) -> #(Int, Int) {
+  case n % prime == 0 {
+    True -> strip(n / prime, prime, count + 1)
+    False -> #(n, count)
+  }
+}
+
+// The places of a fraction whose decimal expansion ends, or Error(Nil).
+@target(erlang)
+fn places(value: Fraction) -> Result(Int, Nil) {
+  let denominator = value.denominator / gcd(value.numerator, value.denominator)
+  let #(rest, twos) = strip(denominator, 2, 0)
+  let #(rest, fives) = strip(rest, 5, 0)
+  case rest == 1 {
+    True -> Ok(int.max(twos, fives))
+    False -> Error(Nil)
+  }
+}
+
+// The digits to round at: one place short of a value with at most 29
+// places, so that its last digit decides, a tie when that digit is 5.
+// Otherwise `fallback`. The flag says whether the value was short.
+@target(erlang)
+fn tie_digits(value: Fraction, fallback: Int) -> #(Int, Bool) {
+  case places(value) {
+    Ok(count) if count >= 1 && count <= 29 -> #(count - 1, True)
+    _ -> #(fallback, False)
+  }
+}
+
+@target(erlang)
+fn is_tie(value: Fraction) -> Bool {
+  case places(value) {
+    Ok(count) if count >= 1 && count <= 29 -> {
+      let scaled = value.numerator * pow10(count) / value.denominator
+      int.absolute_value(scaled) % 10 == 5
+    }
+    _ -> False
+  }
+}
+
+// Rates whose 1 + rate is a ratio of powers of 2 and 5, or ends in 5,
+// so that powers of it end and ties are common.
+@target(erlang)
+fn tie_rate() -> Generator(decimal.Decimal) {
+  generator.element_of(
+    list.map(
+      [
+        #(0, 0),
+        #(5, -1),
+        #(1, 0),
+        #(15, -1),
+        #(-5, -1),
+        #(25, -2),
+        #(5, -2),
+        #(4, 0),
+        #(-75, -2),
+        #(24, -3),
+        #(-2, -1),
+        #(6, -1),
+        #(9, 0),
+        #(-96, -2),
+        #(125, -3),
+      ],
+      fn(pair) { make(pair.0, pair.1) },
+    ),
+  )
+}
+
+@target(erlang)
+fn tie_amount() -> Generator(decimal.Decimal) {
+  generator.map3(
+    generator.int(range.constant(0, 99_999)),
+    generator.element_of([1, 5, 25, 125, 375, 1024]),
+    generator.int(range.constant(-8, 0)),
+    fn(c, factor, exponent) { make({ 2 * c + 1 } * factor, exponent) },
+  )
+}
+
+@target(erlang)
+fn tie_inputs() {
+  generator.tuple4(
+    tie_amount(),
+    tie_rate(),
+    generator.one_of([
+      generator.int(range.constant(1, 25)),
+      generator.int(range.constant(1, 1200)),
+    ]),
+    generator.int(range.constant(0, 28)),
+  )
+}
+
+@target(erlang)
+fn exact_parts(
+  value: Result(decimal.Decimal, decimal.ArithmeticError),
+) -> Result(#(Int, Int), interest.InterestError) {
+  case value {
+    Ok(d) -> Ok(#(decimal.coefficient(d), decimal.exponent(d)))
+    Error(error) -> Error(interest.ArithmeticFailed(error))
+  }
+}
+
+// The function equals the oracle, and so does the exact value when the
+// exact value is short, as every tie is: the limit on the exact value
+// never turns a tie into `PrecisionExceeded`.
+@target(erlang)
+fn agrees(
+  exact: Fraction,
+  fallback: Int,
+  compute: fn(Int) -> Result(decimal.Decimal, interest.InterestError),
+  value: tvm.Value,
+) -> Bool {
+  let #(digits, short) = tie_digits(exact, fallback)
+  let expected = round(exact, digits)
+  parts(compute(digits)) == expected
+  && { !short || exact_parts(value.exact(digits)) == expected }
+}
+
+@target(erlang)
+pub fn future_value_ties_match_the_exact_oracle_test() {
+  metamon.forall_with(config(), tie_inputs(), fn(input) {
+    let #(present, rate, periods, fallback) = input
+    let exact = multiply(of(present), raise(add(integer(1), of(rate)), periods))
+    agrees(
+      exact,
+      fallback,
+      fn(digits) {
+        interest.future_value(
+          present:,
+          rate_per_period: rate,
+          periods:,
+          digits:,
+        )
+      },
+      tvm.future_value(present, rate, periods),
+    )
+  })
+}
+
+@target(erlang)
+pub fn present_value_ties_match_the_exact_oracle_test() {
+  metamon.forall_with(config(), tie_inputs(), fn(input) {
+    let #(future, rate, periods, fallback) = input
+    let assert Ok(exact) =
+      divide(of(future), raise(add(integer(1), of(rate)), periods))
+    agrees(
+      exact,
+      fallback,
+      fn(digits) {
+        interest.present_value(
+          future:,
+          rate_per_period: rate,
+          periods:,
+          digits:,
+        )
+      },
+      tvm.present_value(future, rate, periods),
+    )
+  })
+}
+
+@target(erlang)
+pub fn payment_ties_match_the_exact_oracle_test() {
+  metamon.forall_with(
+    config(),
+    generator.filter(tie_inputs(), fn(input) { !decimal.is_zero(input.1) }),
+    fn(input) {
+      let #(principal, rate, periods, fallback) = input
+      let growth = raise(add(integer(1), of(rate)), periods)
+      let assert Ok(exact) =
+        divide(
+          multiply(multiply(of(principal), of(rate)), growth),
+          add(growth, integer(-1)),
+        )
+      agrees(
+        exact,
+        fallback,
+        fn(digits) {
+          interest.payment(principal:, rate_per_period: rate, periods:, digits:)
+        },
+        tvm.payment(principal, rate, periods),
+      )
+    },
+  )
+}
+
+@target(erlang)
+pub fn effective_annual_rate_ties_match_the_exact_oracle_test() {
+  metamon.forall_with(
+    config(),
+    generator.tuple3(
+      generator.map2(
+        generator.int(range.constant(-100, 4000)),
+        generator.int(range.constant(-2, 0)),
+        fn(c, exponent) { make(int.max(c, -100), exponent) },
+      )
+        |> generator.filter(fn(nominal) {
+          decimal.compare(nominal, decimal.negate(decimal.one())) != order.Lt
+        }),
+      generator.one_of([
+        generator.int(range.constant(1, 29)),
+        generator.int(range.constant(1, 1200)),
+      ]),
+      generator.int(range.constant(0, 28)),
+    ),
+    fn(input) {
+      let #(nominal, compounds, fallback) = input
+      let assert Ok(per_period) = divide(of(nominal), integer(compounds))
+      let exact =
+        add(raise(add(integer(1), per_period), compounds), integer(-1))
+      agrees(
+        exact,
+        fallback,
+        fn(digits) {
+          interest.effective_annual_rate(
+            nominal_rate: nominal,
+            compounds_per_year: compounds,
+            digits:,
+          )
+        },
+        tvm.effective_annual_rate(nominal, compounds),
+      )
+    },
+  )
+}
+
+@target(erlang)
+/// The tie inputs do make ties: at least a tenth of them for
+/// `future_value` and `present_value`.
+pub fn the_tie_inputs_make_ties_test() {
+  let samples = generator.sample(tie_inputs(), 500)
+  let future =
+    list.count(samples, fn(input) {
+      let #(present, rate, periods, _) = input
+      is_tie(multiply(of(present), raise(add(integer(1), of(rate)), periods)))
+    })
+  let present =
+    list.count(samples, fn(input) {
+      let #(future, rate, periods, _) = input
+      case divide(of(future), raise(add(integer(1), of(rate)), periods)) {
+        Ok(value) -> is_tie(value)
+        Error(Nil) -> False
+      }
+    })
+  assert future >= 50
+  assert present >= 50
 }

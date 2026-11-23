@@ -7,6 +7,16 @@ and this project is expected to follow [Semantic Versioning](https://semver.org/
 
 ## [Unreleased]
 
+### Breaking
+
+- The `card` functions that read a card number or an expiry, `validate`, `mask`, `last_four`, `bin`, `detect_brand`, `luhn_valid` and `parse_expiry`, reject input over 1,000 bytes before reading it, the limit `decimal.parse` has: `validate`, `mask`, `last_four` and `bin` return `InvalidLength` with the byte count, `detect_brand` returns `Unknown`, `luhn_valid` returns `False` and `parse_expiry` returns `Error(Nil)`. Before, they split the whole input into graphemes first, so ten megabytes of digits took ten megabytes of work and many times that in memory, and `validate` of 1,001 spaces was `EmptyInput`. A card number has at most 19 digits, so the limit leaves room for any spacing. `normalize` still transforms its whole input.
+
+### Fixed
+
+- When the bounds did not settle a result, `interest.future_value`, `present_value`, `payment` and `effective_annual_rate` computed `(1 + rate)^periods` in full, however large: for a 28-place rate over 1200 periods that is about 35,000 digits, which took 0.4 to 0.6 s on JavaScript and 0.1 to 0.17 s on Erlang. An exact tie can only happen when that power has fewer than about 250 digits (the comment on `exact_limbs` in `src/finanza/internal/tvm.gleam` gives the argument for each function), so the exact value is now computed up to 700 digits and an exponent of 700 and no further, in at most about 2 ms on JavaScript. A value within about 10^-60 of a half-unit, not on it, whose power would need more is `ArithmeticFailed(PrecisionExceeded)`; no such input is known, and random searches of 200,000 inputs, many of them built to land on ties, found none.
+- `interest.payment` at a rate near 2^53 or near -1 over 1200 periods, and `effective_annual_rate` at a nominal rate near 2^53, added 1 to a bound of about 10^19000 exactly and divided by the sum, so a payment of 1 at 9007199254740991 over 1200 periods took about 0.2 s on JavaScript and 65 ms on Erlang, and 2^53 − 1 at -0.999999999999999 took 0.3 s on JavaScript. A bound now keeps its precision however far apart the two numbers it adds are, and these take about 1 ms. A payment at a positive rate whose principal × rate is a tie and whose rest is below 10^-30, such as 3222.6375 at 1.5 over 1152 periods at 4 places, is rounded up from the tie without adding the rest.
+- `interest.present_value` on JavaScript was slower than in 0.13.4. Long division in limbs now finds a limb of the quotient per step instead of a digit, and the product of each period no longer looks for leading zeros it cannot have, so a 360-period `present_value` of 1,000 at `0.0041666666666667` takes 0.26 to 0.34 ms against 0.43 to 0.53 ms in 0.13.4 and 0.49 to 0.90 ms in 0.14.0, and the other interest functions are faster too: a 360-period `payment` at `0.005` takes 0.18 to 0.20 ms against 0.39 to 0.53 ms in 0.14.0.
+
 ## [0.14.0] - 2026-11-23
 
 ### Breaking

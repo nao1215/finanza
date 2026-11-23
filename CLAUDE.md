@@ -33,6 +33,8 @@ src/finanza/
                   # exact Number (times, plus, bounds, divide, round)
                   # the interest functions round once from (internal:
                   # not public API, not in docs)
+    tvm.gleam     # each interest value as bounds plus a capped exact
+                  # computation, and `round`, which rounds it once
     limb.gleam    # exact arithmetic on integers of any size in 7-digit
                   # limbs, shared by decimal and rounded (no Decimal
                   # dependency)

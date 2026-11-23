@@ -4,6 +4,15 @@
 //// Brands are detected from a fixed snapshot of prefix and length rules
 //// taken in May 2026. This is not a BIN database and does not identify
 //// issuers.
+////
+//// Every function that reads a card number or an expiry rejects input
+//// over 1,000 bytes before reading it, as `decimal.parse` does: a card
+//// number has at most 19 digits, so the limit leaves room for any
+//// spacing, and a long input costs no more than a short one. `validate`,
+//// `mask`, `last_four` and `bin` return `InvalidLength` with the byte
+//// count, `detect_brand` returns `Unknown`, `luhn_valid` returns `False`
+//// and `parse_expiry` returns `Error(Nil)`. `normalize` returns its whole
+//// input transformed, whatever its length.
 
 import gleam/bool
 import gleam/int
@@ -31,7 +40,9 @@ pub type ValidationError {
   EmptyInput
   /// A character other than a digit was left after `normalize`.
   InvalidCharacter
-  /// The number has too few or too many digits.
+  /// The number has too few or too many digits, or the input is over
+  /// 1,000 bytes, and then `length` is its byte count, not a count of
+  /// digits: such input is not read.
   InvalidLength(length: Int)
   /// The number fails the Luhn check.
   InvalidLuhn
@@ -68,6 +79,20 @@ pub const default_mask =
     group_size: 4,
     group_separator: " ",
   )
+
+// The most bytes a card number or expiry may have, the limit of
+// `decimal.parse`.
+const max_input_bytes: Int = 1000
+
+// The input's byte count when it is over the limit.
+fn too_long(input: String) -> Result(Nil, ValidationError) {
+  let size = string.byte_size(input)
+  use <- bool.guard(
+    when: size > max_input_bytes,
+    return: Error(InvalidLength(length: size)),
+  )
+  Ok(Nil)
+}
 
 /// A card expiry month and four-digit year.
 ///
@@ -143,8 +168,8 @@ fn fold_digit_grapheme(grapheme: String) -> String {
 // --- Luhn ---------------------------------------------------------------
 
 /// Returns `True` when `digits` passes the Luhn check. Returns `False`
-/// for an empty string or any character other than an ASCII digit, so
-/// call `normalize` first on typed input.
+/// for an empty string, any character other than an ASCII digit, or
+/// input over 1,000 bytes, so call `normalize` first on typed input.
 ///
 /// ## Examples
 ///
@@ -159,6 +184,7 @@ fn fold_digit_grapheme(grapheme: String) -> String {
 /// ```
 ///
 pub fn luhn_valid(digits: String) -> Bool {
+  use <- bool.guard(when: too_long(digits) != Ok(Nil), return: False)
   let chars = string.to_graphemes(digits)
   case list.is_empty(chars) || !all_digits(chars) {
     True -> False
@@ -217,6 +243,7 @@ fn digit_value(char: String) -> Result(Int, Nil) {
 /// number match, without the Luhn check. Use `validate` to check both.
 ///
 pub fn detect_brand(pan: String) -> Brand {
+  use <- bool.guard(when: too_long(pan) != Ok(Nil), return: Unknown)
   let normalized = normalize(pan)
   case digits_only(normalized) {
     Ok(_) -> classify_brand(normalized)
@@ -343,6 +370,7 @@ pub fn brand_to_string(brand: Brand) -> String {
 /// ```
 ///
 pub fn validate(pan: String) -> Result(Brand, ValidationError) {
+  use _ <- result.try(too_long(pan))
   let normalized = normalize(pan)
   use <- bool.guard(when: normalized == "", return: Error(EmptyInput))
   use _ <- result.try(digits_only(normalized))
@@ -391,6 +419,7 @@ pub fn mask(
   pan: String,
   with options: MaskOptions,
 ) -> Result(String, ValidationError) {
+  use _ <- result.try(too_long(pan))
   let normalized = normalize(pan)
   use <- bool.guard(when: normalized == "", return: Error(EmptyInput))
   use _ <- result.try(digits_only(normalized))
@@ -447,6 +476,7 @@ fn chunks_loop(
 /// Returns the last 4 digits of the normalized number.
 ///
 pub fn last_four(pan: String) -> Result(String, ValidationError) {
+  use _ <- result.try(too_long(pan))
   let normalized = normalize(pan)
   use <- bool.guard(when: normalized == "", return: Error(EmptyInput))
   use _ <- result.try(digits_only(normalized))
@@ -462,6 +492,7 @@ pub fn last_four(pan: String) -> Result(String, ValidationError) {
 /// identification number.
 ///
 pub fn bin(pan: String) -> Result(String, ValidationError) {
+  use _ <- result.try(too_long(pan))
   let normalized = normalize(pan)
   use <- bool.guard(when: normalized == "", return: Error(EmptyInput))
   use _ <- result.try(digits_only(normalized))
@@ -513,6 +544,7 @@ pub fn expiry_valid(expiry: Expiry, today today: Expiry) -> Bool {
 /// ```
 ///
 pub fn parse_expiry(input: String) -> Result(Expiry, Nil) {
+  use _ <- result.try(too_long(input) |> result.replace_error(Nil))
   use #(month, year) <- result.try(extract_month_year(string.trim(input)))
   use month <- result.try(parse_month(month))
   use year <- result.map(parse_year(year))

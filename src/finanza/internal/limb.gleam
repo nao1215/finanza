@@ -9,6 +9,7 @@
 //// work on plain integers and do not depend on `Decimal`, so both modules
 //// can import them.
 
+import gleam/float
 import gleam/int
 import gleam/list
 import gleam/order
@@ -322,54 +323,107 @@ pub fn from_digits(digits: List(Int)) -> List(Int) {
 }
 
 /// The quotient and remainder of `a / b`, for a non-zero `b`, by long
-/// division one decimal digit at a time. The remainder starts from the
-/// leading digits of `a` that are fewer than those of `b`, so each of the
-/// remaining steps adds one digit to the quotient, and each subtracts
-/// `b` at most nine times.
+/// division one limb at a time, both without leading zero limbs. Each
+/// limb of the quotient is estimated from the leading limbs of the
+/// remainder and the divisor, which puts it within two of the right one,
+/// and then corrected exactly, so every step multiplies and subtracts
+/// `b` a bounded number of times and no value passes 2^53.
 ///
 pub fn divide(a: List(Int), b: List(Int)) -> #(List(Int), List(Int)) {
   let divisor = trim(b)
-  let leading =
-    a
-    |> to_digits
-    |> list.reverse
-    |> list.drop_while(fn(digit) { digit == 0 })
-  let width = significant(to_digits(divisor)) - 1
-  case list.length(leading) <= width {
-    True -> #([], trim(a))
-    False -> {
-      let #(head, rest) = list.split(leading, width)
-      divide_digits(rest, divisor, from_digits(list.reverse(head)), [])
+  let leading = list.reverse(trim(a))
+  case divisor {
+    [single] -> divide_short(leading, single, 0, [])
+    _ -> {
+      let length = list.length(divisor)
+      let top = case list.drop(divisor, length - 2) {
+        [next, high] -> int.to_float(high * limb_base + next)
+        _ -> 1.0
+      }
+      divide_long(leading, divisor, length, top, [], [])
     }
   }
 }
 
-// `quotient` collects the quotient digits, the latest, least significant
-// one first.
-fn divide_digits(
-  digits: List(Int),
+// Division by one limb. `limbs` are the dividend's, the most significant
+// first, and `quotient` collects the quotient's, the latest, least
+// significant one first. remainder × base + limb is below 10^14.
+fn divide_short(
+  limbs: List(Int),
+  divisor: Int,
+  remainder: Int,
+  quotient: List(Int),
+) -> #(List(Int), List(Int)) {
+  case limbs {
+    [] -> #(trim(quotient), trim([remainder]))
+    [limb, ..rest] -> {
+      let value = remainder * limb_base + limb
+      divide_short(rest, divisor, value % divisor, [value / divisor, ..quotient])
+    }
+  }
+}
+
+// Division by two limbs or more, whose two leading limbs make `top`. The
+// remainder stays below the divisor, so each step's quotient limb is
+// below the base.
+fn divide_long(
+  limbs: List(Int),
   divisor: List(Int),
+  length: Int,
+  top: Float,
   remainder: List(Int),
   quotient: List(Int),
 ) -> #(List(Int), List(Int)) {
-  case digits {
-    [] -> #(from_digits(quotient), remainder)
-    [digit, ..rest] -> {
-      let #(count, remainder) =
-        subtract_while(trim(scale(remainder, 10, digit, [])), divisor, 0)
-      divide_digits(rest, divisor, remainder, [count, ..quotient])
+  case limbs {
+    [] -> #(trim(quotient), remainder)
+    [limb, ..rest] -> {
+      let #(digit, remainder) =
+        divide_step(trim([limb, ..remainder]), divisor, length, top)
+      divide_long(rest, divisor, length, top, remainder, [digit, ..quotient])
     }
   }
 }
 
-fn subtract_while(
+// floor(value / divisor) and the remainder, for a value below divisor ×
+// base. The three leading limbs of the value over the two of the divisor
+// are within two of the quotient: each drops less than one unit of its
+// last limb, and the divisor's is at least the base.
+fn divide_step(
   value: List(Int),
   divisor: List(Int),
-  count: Int,
+  length: Int,
+  top: Float,
 ) -> #(Int, List(Int)) {
-  case compare_values(value, divisor) {
-    order.Lt -> #(count, value)
+  let leading = case list.drop(value, length - 2) {
+    [low, middle, high] ->
+      int.to_float(high) *. 1.0e14 +. int.to_float(middle * limb_base + low)
+    [low, middle] -> int.to_float(middle * limb_base + low)
+    _ -> 0.0
+  }
+  let guess = int.clamp(float.truncate(leading /. top), 0, limb_base - 1)
+  correct_down(value, divisor, guess)
+}
+
+fn correct_down(
+  value: List(Int),
+  divisor: List(Int),
+  guess: Int,
+) -> #(Int, List(Int)) {
+  let product = trim(scale(divisor, guess, 0, []))
+  case compare_values(product, value) {
+    order.Gt -> correct_down(value, divisor, guess - 1)
+    order.Eq | order.Lt -> correct_up(subtract(value, product), divisor, guess)
+  }
+}
+
+fn correct_up(
+  left: List(Int),
+  divisor: List(Int),
+  guess: Int,
+) -> #(Int, List(Int)) {
+  case compare_values(left, divisor) {
+    order.Lt -> #(guess, left)
     order.Eq | order.Gt ->
-      subtract_while(subtract(value, divisor), divisor, count + 1)
+      correct_up(subtract(left, divisor), divisor, guess + 1)
   }
 }
