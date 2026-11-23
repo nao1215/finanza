@@ -7,6 +7,8 @@ and this project is expected to follow [Semantic Versioning](https://semver.org/
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-11-23
+
 ### Breaking
 
 A `Decimal` now has a bounded exponent as well as a bounded coefficient, so untrusted input cannot make a huge value. The range is the same on Erlang and JavaScript.
