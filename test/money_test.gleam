@@ -134,7 +134,7 @@ pub fn from_major_round_trips_via_to_minor_test() -> Nil {
 }
 
 pub fn from_minor_rejects_out_of_range_units_test() -> Nil {
-  money.from_minor(9_007_199_254_740_992, in: money.jpy)
+  money.from_minor(9_007_199_254_740_991 + 1, in: money.jpy)
   |> should.equal(Error(money.ArithmeticFailed(decimal.PrecisionExceeded)))
 }
 
