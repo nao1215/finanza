@@ -21,6 +21,7 @@ import gleam/order
 import gleam/result
 
 import finanza/decimal.{type Decimal}
+import finanza/internal/rounded
 
 /// Why an interest calculation was rejected.
 ///
@@ -89,10 +90,18 @@ pub fn simple(
   use _ <- result.try(check_periods(periods, minimum: 0))
   use _ <- result.try(check_digits(digits))
   use periods <- result.try(int_to_decimal(periods))
-  decimal.multiply(principal, rate)
-  |> result.try(decimal.multiply(_, periods))
+  // Scale the principal by the period count exactly and round the
+  // product with the rate once. When that scaling does not fit, round
+  // principal × rate at as many places as fit, then scale it.
+  case decimal.multiply(principal, periods) {
+    Ok(scaled) ->
+      rounded.multiply(scaled, rate, digits:, rounding: decimal.HalfEven)
+    Error(decimal.PrecisionExceeded) | Error(decimal.DivisionByZero) -> {
+      use product <- result.try(multiply_at_most(principal, rate, max_digits))
+      rounded.multiply(product, periods, digits:, rounding: decimal.HalfEven)
+    }
+  }
   |> result.map_error(ArithmeticFailed)
-  |> result.try(round_to(_, digits))
 }
 
 /// Returns `present × (1 + rate_per_period)^periods`.
@@ -194,7 +203,8 @@ pub fn payment(
       rounding: decimal.HalfEven,
     ))
     use denominator <- result.try(decimal.subtract(decimal.one(), inverse))
-    use numerator <- result.try(decimal.multiply(principal, rate))
+    // The exact numerator, or as many of its places as fit.
+    use numerator <- result.try(multiply_at_most(principal, rate, max_digits))
     // Dividing at more than the working precision would overflow for
     // ordinary loans and add no accuracy, so pad afterwards instead.
     decimal.divide(
@@ -294,10 +304,12 @@ fn schedule_loop(
   rows rows: List(Period),
 ) -> Result(List(Period), decimal.ArithmeticError) {
   use <- bool.guard(when: index > periods, return: Ok(list.reverse(rows)))
-  use interest <- result.try(
-    decimal.multiply(balance, rate)
-    |> result.try(decimal.round(_, digits: digits, rounding: decimal.HalfEven)),
-  )
+  use interest <- result.try(rounded.multiply(
+    balance,
+    rate,
+    digits: digits,
+    rounding: decimal.HalfEven,
+  ))
   use row <- result.try(case index == periods {
     // The last row clears whatever rounding has left on the balance.
     True -> {
@@ -355,16 +367,16 @@ fn pow_loop(
   digits digits: Int,
 ) -> Result(Decimal, InterestError) {
   use <- bool.guard(when: exponent <= 0, return: Ok(accumulator))
-  // Give up places in the accumulator when the product would otherwise
-  // overflow. Fast growth loses precision instead of failing.
-  let safe = round_for_multiply(accumulator, base, digits)
+  // Give up places when the product would otherwise overflow. Fast
+  // growth loses precision instead of failing.
   use product <- result.try(
-    decimal.multiply(safe, base) |> result.map_error(ArithmeticFailed),
+    multiply_at_most(accumulator, base, digits)
+    |> result.map_error(ArithmeticFailed),
   )
   pow_loop(
     base: base,
     exponent: exponent - 1,
-    accumulator: round_or_keep(product, digits),
+    accumulator: product,
     digits: digits,
   )
 }
@@ -377,7 +389,17 @@ fn discount_loop(
   digits digits: Int,
 ) -> Result(Decimal, InterestError) {
   use <- bool.guard(when: exponent <= 0, return: Ok(accumulator))
-  use quotient <- result.try(divide_at_most(accumulator, base, digits))
+  use quotient <- result.try(
+    at_most(digits, fn(places) {
+      decimal.divide(
+        accumulator,
+        base,
+        digits: places,
+        rounding: decimal.HalfEven,
+      )
+    })
+    |> result.map_error(ArithmeticFailed),
+  )
   discount_loop(
     base: base,
     exponent: exponent - 1,
@@ -386,46 +408,31 @@ fn discount_loop(
   )
 }
 
-// Divides at the most places up to `digits` that do not overflow.
-fn divide_at_most(
+// Multiplies and rounds half-even at the most places up to `digits`,
+// and no fewer than 0, at which the product does not overflow.
+fn multiply_at_most(
   a: Decimal,
   b: Decimal,
   digits: Int,
-) -> Result(Decimal, InterestError) {
-  case decimal.divide(a, b, digits: digits, rounding: decimal.HalfEven) {
-    Ok(quotient) -> Ok(quotient)
+) -> Result(Decimal, decimal.ArithmeticError) {
+  at_most(digits, fn(places) {
+    rounded.multiply(a, b, digits: places, rounding: decimal.HalfEven)
+  })
+}
+
+// Runs `attempt` at the most places up to `digits`, and no fewer than
+// 0, at which it does not overflow.
+fn at_most(
+  digits: Int,
+  attempt: fn(Int) -> Result(Decimal, decimal.ArithmeticError),
+) -> Result(Decimal, decimal.ArithmeticError) {
+  case attempt(digits) {
+    Ok(value) -> Ok(value)
     Error(error) ->
       case digits > 0 {
-        True -> divide_at_most(a, b, digits - 1)
-        False -> Error(ArithmeticFailed(error))
+        True -> at_most(digits - 1, attempt)
+        False -> Error(error)
       }
-  }
-}
-
-// Rounds `a` to the most places up to `digits` at which a × b stays in
-// range, both in the coefficient and in the exponent. Returns `a`
-// unchanged when no number of places is enough; the multiplication then
-// reports the overflow.
-fn round_for_multiply(a: Decimal, b: Decimal, digits: Int) -> Decimal {
-  use <- bool.guard(when: digits < 0 || decimal.is_zero(b), return: a)
-  // The product has the exponent -digits + exponent(b), at least -28.
-  let digits = int.min(digits, max_digits + decimal.exponent(b))
-  let candidate = round_or_keep(a, digits)
-  // `multiply` computes the product exactly and drops trailing zeros
-  // itself, so ask it whether this candidate fits.
-  case decimal.multiply(candidate, b) {
-    Ok(_) -> candidate
-    Error(decimal.PrecisionExceeded) | Error(decimal.DivisionByZero) ->
-      round_for_multiply(a, b, digits - 1)
-  }
-}
-
-// Rounding to fewer places cannot overflow; padding to more places can,
-// and then the value is kept as it is.
-fn round_or_keep(value: Decimal, digits: Int) -> Decimal {
-  case decimal.round(value, digits: digits, rounding: decimal.HalfEven) {
-    Ok(rounded) -> rounded
-    Error(decimal.PrecisionExceeded) | Error(decimal.DivisionByZero) -> value
   }
 }
 

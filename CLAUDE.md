@@ -28,6 +28,9 @@ src/finanza/
                   # arithmetic, allocate, FormatOptions and format
   interest.gleam  # TVM functions and the amortization schedule (Period)
   card.gleam      # PAN: Luhn, brand, MaskOptions and mask, Expiry
+  internal/
+    rounded.gleam # multiply-then-round on the exact product, for money
+                  # and interest (internal: not public API, not in docs)
 test/
   finanza_test.gleam   # gleeunit entry
   support.gleam        # let-assert helpers for in-range test inputs

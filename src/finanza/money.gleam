@@ -13,6 +13,7 @@ import gleam/result
 import gleam/string
 
 import finanza/decimal
+import finanza/internal/rounded
 
 const max_safe_integer: Int = 9_007_199_254_740_991
 
@@ -289,6 +290,12 @@ pub fn sum(
 /// Multiplies the amount by `factor` and rounds the product to the
 /// currency's minor unit.
 ///
+/// The exact product is rounded, so only the rounded amount has to be
+/// in the `Decimal` range: `USD 1234.57 × 1.234567890123456` is
+/// `USD 1524.16` with `HalfEven`. Returns
+/// `Error(ArithmeticFailed(PrecisionExceeded))` when the rounded amount
+/// is out of range, or the currency's exponent is outside -15 to 28.
+///
 /// ## Examples
 ///
 /// ```gleam
@@ -304,12 +311,12 @@ pub fn multiply(
   by factor: decimal.Decimal,
   rounding mode: decimal.RoundingMode,
 ) -> Result(Money, MoneyError) {
-  decimal.multiply(money.amount, factor)
-  |> result.try(decimal.round(
-    _,
+  rounded.multiply(
+    money.amount,
+    factor,
     digits: money.currency.exponent,
     rounding: mode,
-  ))
+  )
   |> result.map(Money(_, money.currency))
   |> result.map_error(ArithmeticFailed)
 }
