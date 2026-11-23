@@ -17,7 +17,7 @@
 //// exact balance times the rate, to `digits`. The unrounded payment is
 //// within about `periods × 1e-15` of the exact one, relative to the
 //// larger of the payment and `principal × rate`, and Python's `decimal`
-//// measured at most 1.3e-14. Only a payment whose exact value is closer
+//// measured at most 5.3e-14. Only a payment whose exact value is closer
 //// than that to a half-unit at `digits` places can round to the other
 //// neighbour. For monthly rates of 1% to 20% a year over 360 and 1200
 //// months, the payment and every row of the schedule are the same as
@@ -223,12 +223,19 @@ pub fn payment(
     )
     |> result.map_error(ArithmeticFailed)
   })
+  // At -1, (1 + rate)^-periods divides by zero.
+  use <- bool.guard(
+    when: decimal.equal(rate, decimal.negate(decimal.one())),
+    return: Error(ArithmeticFailed(decimal.DivisionByZero)),
+  )
   // principal × rate / (1 - (1 + rate)^-periods) is
-  // principal × rate × (1 + 1 / growth), where growth is
+  // principal × rate + principal × (rate / growth), where growth is
   // (1 + rate)^periods - 1. Computing growth itself, rather than
   // (1 + rate)^periods, keeps its significant digits when the rate is
-  // small, and the payment is then one division and one sum, each kept
-  // at the most places that fit, and one rounding to `digits`.
+  // small. rate / growth is near 1 / periods for a small rate, so it
+  // keeps its significant digits at 28 places even when
+  // principal × rate does not, and every value is kept at the most
+  // places that fit, with one rounding to `digits` at the end.
   use growth <- result.try(compound(
     rate: rate,
     periods: periods,
@@ -243,16 +250,17 @@ pub fn payment(
       plus: [],
       at_most: max_digits,
     ))
-    use share <- result.try(
+    use ratio <- result.try(
       at_most(max_digits, fn(places) {
-        decimal.divide(
-          interest,
-          growth,
-          digits: places,
-          rounding: decimal.HalfEven,
-        )
+        decimal.divide(rate, growth, digits: places, rounding: decimal.HalfEven)
       }),
     )
+    use share <- result.try(rounded.multiply_add(
+      principal,
+      ratio,
+      plus: [],
+      at_most: max_digits,
+    ))
     use amount <- result.try(rounded.multiply_add(
       share,
       decimal.one(),

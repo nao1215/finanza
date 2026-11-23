@@ -547,16 +547,16 @@ pub fn absolute(decimal: Decimal) -> Decimal {
   Decimal(..decimal, coefficient: int.absolute_value(decimal.coefficient))
 }
 
-/// Adds two decimals without rounding. The result has the smaller of the
-/// two exponents, except that adding zero returns the other decimal
-/// unchanged.
+/// Adds two decimals without rounding. Adding zero returns the other
+/// decimal unchanged.
 ///
 /// The sum is exact before it is fitted into the range, even when one
-/// operand scaled to the other's exponent passes 2^53 − 1. When the
-/// coefficient of the sum passes 2^53 − 1, the sum drops the fewest
-/// trailing zeros that bring it within, so `1 + -0.8999999999999999` is
-/// `0.1000000000000001` and `1 + 0.1000000000000000` is
-/// `1.100000000000000`.
+/// operand scaled to the other's exponent passes 2^53 − 1. It has the
+/// smaller of the two exponents when its coefficient fits there, so
+/// `1 + -0.8999999999999999` is `0.1000000000000001`. Otherwise it drops
+/// the fewest trailing zeros that bring the coefficient within
+/// 2^53 − 1, so `1 + 0.1000000000000000` is `1.100000000000000`, with
+/// the exponent -15.
 ///
 /// Returns `Error(PrecisionExceeded)` when the sum is out of range,
 /// including one that needs more than 2^53 − 1 in its coefficient after

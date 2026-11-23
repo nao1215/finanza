@@ -25,7 +25,7 @@
 //// about 16 significant digits at each period, so the unrounded payment
 //// can be off the exact one by about periods × 1e-15 of the larger of the
 //// payment and principal × rate. Python measured at most 1.1e-15 for the
-//// cases below and 1.3e-14 for random rates, principals and periods. A
+//// cases below and 5.3e-14 for random rates, principals and periods. A
 //// payment whose exact value is closer than that to a half-unit at
 //// `digits` places can round the other way. The closest case below is 7%
 //// over 360 months, 9.6e-6 from a half-cent, and at 6 places every case
@@ -36,6 +36,7 @@ import gleam/result
 
 import finanza/decimal
 import finanza/interest
+import finanza/money
 import support
 
 fn text(value: Result(decimal.Decimal, a)) -> Result(String, a) {
@@ -602,6 +603,38 @@ pub fn the_reported_payment_test() {
     == Ok("1330.60")
 }
 
+pub fn payment_keeps_its_digits_when_principal_times_rate_is_tiny_test() {
+  // 0.001 × 1.2e-27 rounds to 0 at 28 places, but over one period the
+  // payment is principal × (1 + rate) = 0.001000...00012.
+  assert interest.payment(
+      principal: support.parse("0.001"),
+      rate_per_period: support.parse("1.2e-27"),
+      periods: 1,
+      digits: 3,
+    )
+    |> text
+    == Ok("0.001")
+}
+
+pub fn payment_at_a_rate_of_minus_one_test() {
+  // (1 + rate)^-periods divides by zero, as before.
+  let rate = support.int(-1)
+  assert interest.payment(
+      principal: support.int(1000),
+      rate_per_period: rate,
+      periods: 12,
+      digits: 2,
+    )
+    == Error(interest.ArithmeticFailed(decimal.DivisionByZero))
+  assert interest.schedule(
+      principal: support.int(1000),
+      rate_per_period: rate,
+      periods: 12,
+      digits: 2,
+    )
+    == Error(interest.ArithmeticFailed(decimal.DivisionByZero))
+}
+
 // --- effective annual rate against Python -----------------------------------
 
 // (1 + annual / m)^m - 1 for annual rates of 1% to 20%, rounded half-even
@@ -751,6 +784,25 @@ pub fn sum_with_zero_test() {
       support.new(coefficient: 0, exponent: -28),
     ))
     == Ok(#(0, -28))
+}
+
+pub fn money_sum_keeps_the_currency_places_test() {
+  // The exact sum 90071992547410.00 needs 2^53 at 2 places. `decimal.add`
+  // gives 90071992547410.0, but an amount with fewer places than its
+  // currency could not be turned back into minor units.
+  let large =
+    support.from_minor(units: 9_007_199_254_740_991, currency: money.usd)
+  let small = support.from_minor(units: 9, currency: money.usd)
+  assert money.add(large, small)
+    == Error(money.ArithmeticFailed(decimal.PrecisionExceeded))
+  assert money.subtract(large, money.negate(small))
+    == Error(money.ArithmeticFailed(decimal.PrecisionExceeded))
+  assert money.sum([large, small], in: money.usd)
+    == Error(money.ArithmeticFailed(decimal.PrecisionExceeded))
+  let assert Ok(total) = money.add(large, money.negate(small))
+  assert money.to_string(total) == "USD 90071992547409.82"
+  assert money.add(large, support.from_minor(units: 0, currency: money.usd))
+    == Ok(large)
 }
 
 // --- helpers -----------------------------------------------------------------
