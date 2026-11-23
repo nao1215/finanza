@@ -11,8 +11,8 @@
 //// `schedule` work at 7, so a `digits` above 7 pads with zeros there.
 ////
 //// A `Decimal` has at most 28 places, so a `digits` above 28 returns
-//// `ArithmeticFailed(PrecisionExceeded)` before any work is done, and
-//// `future_value` and `present_value` work at no more than 28 places.
+//// `DigitsOutOfRange` before any work is done, and `future_value` and
+//// `present_value` work at no more than 28 places.
 
 import gleam/bool
 import gleam/int
@@ -35,8 +35,9 @@ pub type InterestError {
   /// The number of compounding periods per year was zero, negative or
   /// above 1200.
   CompoundsOutOfRange
-  /// `digits` was negative.
-  NegativeDigits
+  /// `digits` was negative or above 28, the most places a `Decimal`
+  /// has.
+  DigitsOutOfRange
   /// The decimal arithmetic underneath failed.
   ArithmeticFailed(decimal.ArithmeticError)
 }
@@ -474,10 +475,9 @@ fn check_periods(
 }
 
 fn check_digits(digits: Int) -> Result(Nil, InterestError) {
-  use <- bool.guard(when: digits < 0, return: Error(NegativeDigits))
   use <- bool.guard(
-    when: digits > max_digits,
-    return: Error(ArithmeticFailed(decimal.PrecisionExceeded)),
+    when: digits < 0 || digits > max_digits,
+    return: Error(DigitsOutOfRange),
   )
   Ok(Nil)
 }

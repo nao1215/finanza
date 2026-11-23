@@ -560,10 +560,36 @@ pub fn subtract(a: Decimal, b: Decimal) -> Result(Decimal, ArithmeticError) {
 /// Multiplies two decimals without rounding. The exponents add up, so
 /// `1.5 × 0.25` is `0.375`.
 ///
-/// Returns `Error(PrecisionExceeded)` when the product is out of range.
+/// When the exponents add up to less than -28, the product drops as
+/// many trailing zeros as it needs to reach -28, so `0.10 × 1e-27` is
+/// `1e-28`. A zero product has its exponent moved into -28 to 15.
+///
+/// Returns `Error(PrecisionExceeded)` when the product is out of range,
+/// including a product with a non-zero digit past 28 places.
 ///
 pub fn multiply(a: Decimal, b: Decimal) -> Result(Decimal, ArithmeticError) {
-  checked(a.coefficient * b.coefficient, a.exponent + b.exponent)
+  let coefficient = a.coefficient * b.coefficient
+  let exponent = a.exponent + b.exponent
+  case coefficient, exponent < min_exponent {
+    0, _ ->
+      checked(0, int.clamp(exponent, min: min_exponent, max: max_exponent))
+    _, False -> checked(coefficient, exponent)
+    _, True -> {
+      let places = min_exponent - exponent
+      // A coefficient within 2^53 - 1 has at most 15 trailing zeros, and
+      // one past it would differ between the targets.
+      use <- bool.guard(
+        when: places > 15
+          || int.absolute_value(coefficient) > max_safe_coefficient,
+        return: Error(PrecisionExceeded),
+      )
+      let divisor = pow_10(places)
+      case coefficient % divisor {
+        0 -> checked(coefficient / divisor, min_exponent)
+        _ -> Error(PrecisionExceeded)
+      }
+    }
+  }
 }
 
 /// Divides `a` by `b` and rounds the quotient to `digits` places after

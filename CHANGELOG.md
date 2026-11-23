@@ -14,7 +14,9 @@ A `Decimal` now has a bounded exponent as well as a bounded coefficient, so untr
 - The exponent must be between -28 and 15, for zero too. 28 places cover every ISO 4217 minor unit (0 to 4) and interest rates with room to spare, and match the largest scale of rust_decimal and .NET `System.Decimal`; 15 is the largest exponent at which a non-zero coefficient fits within 2^53 − 1. `decimal.new` returns `Error(Nil)`, `decimal.parse` returns `ParsedValueTooLarge`, and `multiply`, `round` and `divide` return `PrecisionExceeded` outside it. Before, `parse("1e-999999999")` succeeded and `to_string` of the result built a string of a billion characters.
 - `decimal.round` and `decimal.divide` return `PrecisionExceeded` when `digits` is outside -15 to 28, before doing any work. `round(decimal.zero(), digits: 30, ..)` and `round(decimal.one(), digits: -20, ..)` used to return a zero with that exponent.
 - `decimal.parse` returns the new `InputTooLong` variant for input over 1,000 bytes, counted before whitespace is trimmed. 1,000 is the default maximum number length of Jackson's `StreamReadConstraints`. A `case` over `ParseError` needs a branch for it.
-- `interest` functions return `ArithmeticFailed(PrecisionExceeded)` for `digits` above 28 before doing any work. `future_value` and `present_value` work at no more than 28 places.
+- `decimal.multiply` keeps the product in range: when the exponents add up to less than -28, it drops as many trailing zeros as needed to reach -28 (`0.10 × 1e-27` is `1e-28` with the exponent -28), and a zero product has its exponent moved into -28 to 15. A product with a non-zero digit past 28 places is `PrecisionExceeded`.
+- `interest.NegativeDigits` is renamed `DigitsOutOfRange`, and `interest` functions also return it for `digits` above 28, before doing any work. `future_value` and `present_value` work at no more than 28 places.
+- A `money.Currency` must have an exponent between 0 and 28; `from_minor`, `to_minor`, `sum` and `allocate` return `ArithmeticFailed(PrecisionExceeded)` for one outside it.
 - `money.allocate` returns `ArithmeticFailed(PrecisionExceeded)` when the ratios add up to more than 2^53 − 1.
 
 Before:

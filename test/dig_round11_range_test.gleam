@@ -248,6 +248,52 @@ pub fn multiply_fails_below_the_smallest_exponent_test() {
     == Error(decimal.PrecisionExceeded)
 }
 
+pub fn multiply_drops_trailing_zeros_to_reach_the_smallest_exponent_test() {
+  // 0.10 × 1e-27 has the exponent -29 but the value 1e-28.
+  assert decimal.multiply(support.parse("0.10"), support.parse("1e-27")) |> text
+    == Ok("0.0000000000000000000000000001")
+  assert decimal.multiply(
+      support.parse("1000.00"),
+      support.parse("0.000000000000000000000000001"),
+    )
+    |> text
+    == Ok("0.0000000000000000000000010000")
+  // A non-zero digit at place 29 cannot be kept.
+  assert decimal.multiply(
+      support.parse("1000.01"),
+      support.parse("0.000000000000000000000000001"),
+    )
+    == Error(decimal.PrecisionExceeded)
+}
+
+pub fn multiply_moves_a_zero_product_into_range_test() {
+  let zero = support.parse("0.00000000000000")
+  assert decimal.multiply(zero, support.parse("0.000000000000001")) |> text
+    == Ok("0.0000000000000000000000000000")
+  let big_zero = support.new(coefficient: 0, exponent: 15)
+  assert decimal.multiply(big_zero, big_zero)
+    == Ok(support.new(coefficient: 0, exponent: 15))
+}
+
+pub fn money_multiply_by_a_tiny_factor_rounds_to_zero_test() {
+  let amount = support.from_minor(units: 100_000, currency: money.usd)
+  assert money.multiply(
+      amount,
+      by: support.parse("0.000000000000000000000000001"),
+      rounding: decimal.HalfEven,
+    )
+    |> result.map(money.to_string)
+    == Ok("USD 0.00")
+}
+
+pub fn currency_exponents_follow_the_decimal_range_test() {
+  let fine = money.Currency(..money.usd, exponent: 28)
+  let too_fine = money.Currency(..money.usd, exponent: 29)
+  assert money.from_minor(1, in: fine) |> result.is_ok
+  assert money.from_minor(1, in: too_fine)
+    == Error(money.ArithmeticFailed(decimal.PrecisionExceeded))
+}
+
 pub fn round_accepts_digits_from_minus_15_to_28_test() {
   let tiny = support.parse("1e-20")
   assert decimal.round(tiny, digits: 28, rounding: decimal.HalfEven) |> text
@@ -556,7 +602,7 @@ pub fn allocate_parts_add_up_near_2_53_test() {
 pub fn interest_rejects_digits_beyond_28_at_once_test() {
   let principal = support.parse("1000")
   let rate = support.parse("0.05")
-  let failed = Error(interest.ArithmeticFailed(decimal.PrecisionExceeded))
+  let failed = Error(interest.DigitsOutOfRange)
   let huge = 1_000_000_000
   assert interest.simple(principal:, rate:, periods: 3, digits: huge) == failed
   assert interest.future_value(
@@ -592,7 +638,7 @@ pub fn interest_rejects_digits_beyond_28_at_once_test() {
       periods: 12,
       digits: huge,
     )
-    == Error(interest.ArithmeticFailed(decimal.PrecisionExceeded))
+    == Error(interest.DigitsOutOfRange)
   assert interest.future_value(
       present: principal,
       rate_per_period: rate,

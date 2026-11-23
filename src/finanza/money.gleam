@@ -19,6 +19,10 @@ const max_safe_integer: Int = 9_007_199_254_740_991
 /// A currency: its ISO 4217 code, the number of digits in its minor
 /// unit (2 for cents, 0 for yen), its symbol and its English name.
 ///
+/// The exponent must be between 0 and 28, the places a `Decimal` can
+/// have; `from_minor`, `to_minor`, `sum` and `allocate` return
+/// `ArithmeticFailed(PrecisionExceeded)` for a currency outside it.
+///
 pub type Currency {
   Currency(code: String, exponent: Int, symbol: String, name: String)
 }
