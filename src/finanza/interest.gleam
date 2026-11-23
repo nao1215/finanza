@@ -66,8 +66,6 @@ const max_work_digits: Int = 7
 // The most places a Decimal has, from the range in finanza/decimal.
 const max_digits: Int = 28
 
-const max_safe_coefficient: Int = 9_007_199_254_740_991
-
 /// Returns the simple interest `principal × rate × periods`.
 ///
 /// ## Examples
@@ -409,17 +407,16 @@ fn divide_at_most(
 // unchanged when no number of places is enough; the multiplication then
 // reports the overflow.
 fn round_for_multiply(a: Decimal, b: Decimal, digits: Int) -> Decimal {
-  let b_magnitude = int.absolute_value(decimal.coefficient(b))
-  use <- bool.guard(when: digits < 0 || b_magnitude == 0, return: a)
+  use <- bool.guard(when: digits < 0 || decimal.is_zero(b), return: a)
   // The product has the exponent -digits + exponent(b), at least -28.
   let digits = int.min(digits, max_digits + decimal.exponent(b))
   let candidate = round_or_keep(a, digits)
-  case
-    int.absolute_value(decimal.coefficient(candidate)) * b_magnitude
-    <= max_safe_coefficient
-  {
-    True -> candidate
-    False -> round_for_multiply(a, b, digits - 1)
+  // `multiply` computes the product exactly and drops trailing zeros
+  // itself, so ask it whether this candidate fits.
+  case decimal.multiply(candidate, b) {
+    Ok(_) -> candidate
+    Error(decimal.PrecisionExceeded) | Error(decimal.DivisionByZero) ->
+      round_for_multiply(a, b, digits - 1)
   }
 }
 

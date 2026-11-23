@@ -560,35 +560,123 @@ pub fn subtract(a: Decimal, b: Decimal) -> Result(Decimal, ArithmeticError) {
 /// Multiplies two decimals without rounding. The exponents add up, so
 /// `1.5 × 0.25` is `0.375`.
 ///
-/// When the exponents add up to less than -28, the product drops as
-/// many trailing zeros as it needs to reach -28, so `0.10 × 1e-27` is
-/// `1e-28`. A zero product has its exponent moved into -28 to 15.
+/// The product is exact before it is fitted into the range, even when
+/// the coefficients multiply past 2^53. When the exponents add up to
+/// less than -28, or the coefficient passes 2^53 − 1, the product drops
+/// the fewest trailing zeros that bring it into range, so `0.10 × 1e-27`
+/// is `1e-28` and `4503599627370496 × 0.10` is `450359962737049.6`. A
+/// zero product has its exponent moved into -28 to 15.
 ///
 /// Returns `Error(PrecisionExceeded)` when the product is out of range,
-/// including a product with a non-zero digit past 28 places.
+/// including a product with a non-zero digit past 28 places or one that
+/// needs more than 2^53 − 1 in its coefficient after its zeros go.
 ///
 pub fn multiply(a: Decimal, b: Decimal) -> Result(Decimal, ArithmeticError) {
-  let coefficient = a.coefficient * b.coefficient
   let exponent = a.exponent + b.exponent
-  case coefficient, exponent < min_exponent {
-    0, _ ->
-      checked(0, int.clamp(exponent, min: min_exponent, max: max_exponent))
-    _, False -> checked(coefficient, exponent)
-    _, True -> {
-      let places = min_exponent - exponent
-      // A coefficient within 2^53 - 1 has at most 15 trailing zeros, and
-      // one past it would differ between the targets.
-      use <- bool.guard(
-        when: places > 15
-          || int.absolute_value(coefficient) > max_safe_coefficient,
-        return: Error(PrecisionExceeded),
-      )
-      let divisor = pow_10(places)
-      case coefficient % divisor {
-        0 -> checked(coefficient / divisor, min_exponent)
-        _ -> Error(PrecisionExceeded)
-      }
+  let left = int.absolute_value(a.coefficient)
+  let right = int.absolute_value(b.coefficient)
+  use <- bool.lazy_guard(when: left == 0 || right == 0, return: fn() {
+    checked(0, int.clamp(exponent, min: min_exponent, max: max_exponent))
+  })
+  let sign = sign_of(a.coefficient) * sign_of(b.coefficient)
+  let at_least = int.max(0, min_exponent - exponent)
+  use #(magnitude, dropped) <- result.try(
+    case left <= max_safe_coefficient / right {
+      True -> drop_small_zeros(left * right, at_least)
+      False -> drop_zeros(product_digits(left, right), 0, at_least)
+    },
+  )
+  checked(sign * magnitude, exponent + dropped)
+}
+
+// Drops `count` trailing zeros from a product within 2^53 - 1, which
+// both targets compute exactly. Such a product has at most 15 trailing
+// zeros.
+fn drop_small_zeros(
+  product: Int,
+  count: Int,
+) -> Result(#(Int, Int), ArithmeticError) {
+  use <- bool.guard(when: count > 15, return: Error(PrecisionExceeded))
+  let divisor = pow_10(count)
+  case product % divisor {
+    0 -> Ok(#(product / divisor, count))
+    _ -> Error(PrecisionExceeded)
+  }
+}
+
+// Drops trailing zeros from `digits`, the least significant digit
+// first: at least `at_least` of them, and then as few more as bring the
+// value within 2^53 - 1. Returns the value and how many were dropped.
+// The list has 35 digits, so this takes at most 35 steps of at most 35
+// digits each.
+fn drop_zeros(
+  digits: List(Int),
+  dropped: Int,
+  at_least: Int,
+) -> Result(#(Int, Int), ArithmeticError) {
+  let value = case dropped >= at_least {
+    True -> digits_value(digits)
+    False -> Error(Nil)
+  }
+  case value, digits {
+    Ok(value), _ -> Ok(#(value, dropped))
+    Error(Nil), [0, ..rest] -> drop_zeros(rest, dropped + 1, at_least)
+    Error(Nil), _ -> Error(PrecisionExceeded)
+  }
+}
+
+// The value of digits listed least significant first, or `Error(Nil)`
+// when it passes 2^53 - 1. Each step checks before it multiplies, so no
+// intermediate value passes 2^53 - 1 either.
+fn digits_value(digits: List(Int)) -> Result(Int, Nil) {
+  digits
+  |> list.reverse
+  |> list.try_fold(0, fn(value, digit) {
+    case value > { max_safe_coefficient - digit } / 10 {
+      True -> Error(Nil)
+      False -> Ok(value * 10 + digit)
     }
+  })
+}
+
+// Base of the limbs a product is computed in. Every coefficient is
+// below 10^16, so it splits into three limbs, the top one at most 90.
+// A product of two limbs is below 10^14, and a sum of three of them
+// plus a carry stays below 2^53, so both targets compute every step
+// exactly.
+const limb_base: Int = 10_000_000
+
+const limb_digits: Int = 7
+
+// The exact product of two magnitudes within 2^53 - 1, as its 35
+// decimal digits, the least significant first.
+fn product_digits(a: Int, b: Int) -> List(Int) {
+  let #(a0, a1, a2) = split_limbs(a)
+  let #(b0, b1, b2) = split_limbs(b)
+  let c0 = a0 * b0
+  let c1 = a0 * b1 + a1 * b0 + c0 / limb_base
+  let c2 = a0 * b2 + a1 * b1 + a2 * b0 + c1 / limb_base
+  let c3 = a1 * b2 + a2 * b1 + c2 / limb_base
+  // At most 90 × 90 plus a carry of at most 181, so below the base.
+  let c4 = a2 * b2 + c3 / limb_base
+  [c0, c1, c2, c3]
+  |> list.map(fn(limb) { limb % limb_base })
+  |> list.append([c4])
+  |> list.flat_map(limb_to_digits(_, limb_digits))
+}
+
+fn split_limbs(value: Int) -> #(Int, Int, Int) {
+  #(
+    value % limb_base,
+    value / limb_base % limb_base,
+    value / { limb_base * limb_base },
+  )
+}
+
+fn limb_to_digits(limb: Int, count: Int) -> List(Int) {
+  case count {
+    0 -> []
+    _ -> [limb % 10, ..limb_to_digits(limb / 10, count - 1)]
   }
 }
 
