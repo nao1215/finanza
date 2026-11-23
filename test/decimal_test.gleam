@@ -784,9 +784,10 @@ fn list_iter(items: List(a), f: fn(a) -> Nil) -> Nil {
 
 // --- Range limits ---------------------------------------------------------
 
-pub fn zero_with_a_huge_exponent_is_rejected_quickly_test() -> Nil {
+pub fn zero_with_a_huge_exponent_is_handled_quickly_test() -> Nil {
   assert decimal.new(coefficient: 0, exponent: 1_000_000_000) == Error(Nil)
-  assert decimal.parse("0e999999999") == Error(decimal.ParsedValueTooLarge)
+  // parse moves a zero's exponent into range at once.
+  assert decimal.parse("0e999999999") |> result.map(decimal.exponent) == Ok(15)
 }
 
 pub fn products_obey_the_constructor_range_test() -> Nil {

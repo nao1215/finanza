@@ -97,23 +97,24 @@ pub fn parse_rejects_29_places_test() {
   assert decimal.parse("0.00000000000000000000000000001")
     == Error(decimal.ParsedValueTooLarge)
   assert decimal.parse("1e-29") == Error(decimal.ParsedValueTooLarge)
-  // The exponent is kept, so trailing zeros count as places.
-  assert decimal.parse("0.10000000000000000000000000000")
-    == Error(decimal.ParsedValueTooLarge)
+  // Trailing zeros past 28 places are dropped (since 0.14.0).
+  assert decimal.parse("0.10000000000000000000000000000") |> text
+    == Ok("0.1000000000000000")
 }
 
-pub fn parse_bounds_a_zero_like_any_value_test() {
-  assert decimal.parse("0e15") |> result.map(decimal.is_zero) == Ok(True)
-  assert decimal.parse("0e16") == Error(decimal.ParsedValueTooLarge)
-  assert decimal.parse("0e-28") |> result.map(decimal.is_zero) == Ok(True)
-  assert decimal.parse("0e-29") == Error(decimal.ParsedValueTooLarge)
+pub fn parse_moves_a_zero_into_the_range_test() {
+  assert decimal.parse("0e15") |> result.map(decimal.exponent) == Ok(15)
+  assert decimal.parse("0e16") |> result.map(decimal.exponent) == Ok(15)
+  assert decimal.parse("0e-28") |> result.map(decimal.exponent) == Ok(-28)
+  assert decimal.parse("0e-29") |> result.map(decimal.exponent) == Ok(-28)
 }
 
 pub fn parse_rejects_huge_exponents_test() {
   assert decimal.parse("1e-999999999") == Error(decimal.ParsedValueTooLarge)
   assert decimal.parse("1e999999999") == Error(decimal.ParsedValueTooLarge)
-  assert decimal.parse("0e999999999") == Error(decimal.ParsedValueTooLarge)
-  assert decimal.parse("0e-999999999") == Error(decimal.ParsedValueTooLarge)
+  assert decimal.parse("0e999999999") |> text == Ok("0")
+  assert decimal.parse("0e-999999999") |> text
+    == Ok("0.0000000000000000000000000000")
   let nines = string.repeat("9", 900)
   assert decimal.parse("1e-" <> nines) == Error(decimal.ParsedValueTooLarge)
   assert decimal.parse("1e" <> nines) == Error(decimal.ParsedValueTooLarge)
@@ -188,7 +189,8 @@ pub fn positive_exponents_round_trip_by_value_test() {
 }
 
 /// Scientific notation is accepted exactly when the value it names is in
-/// range.
+/// range once the trailing zeros of the coefficient are dropped, and a
+/// zero always is.
 pub fn scientific_notation_matches_the_range_model_test() {
   metamon.forall(
     generator.tuple2(
@@ -199,12 +201,19 @@ pub fn scientific_notation_matches_the_range_model_test() {
       let #(coefficient, exponent) = input
       let source = int.to_string(coefficient) <> "e" <> int.to_string(exponent)
       let fits =
-        exponent >= -28
-        && exponent <= 15
+        coefficient == 0
+        || exponent + trailing_zeros(coefficient) >= -28
         && int.absolute_value(coefficient) * pow10(int.max(exponent, 0)) <= max
       result.is_ok(decimal.parse(source)) == fits
     },
   )
+}
+
+fn trailing_zeros(value: Int) -> Int {
+  case value != 0 && value % 10 == 0 {
+    True -> 1 + trailing_zeros(value / 10)
+    False -> 0
+  }
 }
 
 /// Whatever text `parse` accepts, `to_string` of the result is at most

@@ -26,9 +26,8 @@
 //// `payment` keeps every intermediate value at the most places that fit
 //// and uses the rate as given, so it gives 1330.60; see
 //// `dig_round15_full_precision_test.gleam` for how close to a half-cent
-//// a payment can be and still round right. `future_value` works at
-//// `digits + 2` places, at least 7, on the amount itself, so its error
-//// stays below 1e-6 here.
+//// a payment can be and still round right. Since 0.14.0 `future_value`
+//// and `present_value` round the exact value once too.
 
 import gleam/list
 import gleam/result

@@ -84,9 +84,8 @@ pub type ParseError {
   /// The input has no digits, such as `"+"` or `"."`.
   NoDigits
   /// The value is outside the supported range: more than 2^53 − 1 in
-  /// the coefficient, or an exponent outside -28 to 15. The exponent is
-  /// kept, so `"1e-29"` and `"0.10000000000000000000000000000"` are both
-  /// out of range.
+  /// the coefficient, or an exponent outside -28 to 15, even after the
+  /// trailing zeros are dropped, as for `"1e-29"` or `"1e16"`.
   ParsedValueTooLarge
   /// The input is longer than 1,000 bytes, counted before trimming.
   InputTooLong
@@ -170,8 +169,13 @@ pub fn from_float(value: Float) -> Result(Decimal, ParseError) {
 /// Parses a decimal such as `"12.30"`, `"-0.5"`, `"+7"` or `"1.5e-3"`.
 ///
 /// Leading and trailing Unicode whitespace is ignored, including
-/// no-break spaces. The exponent is kept, so `"12.30"` and `"12.3"`
-/// parse to different representations of the same number.
+/// no-break spaces. The exponent is kept as written when it is in range,
+/// so `"12.30"` and `"12.3"` parse to different representations of the
+/// same number. When it is not, the fewest trailing zeros that bring the
+/// value into range are dropped, the same rule as `add` and `multiply`
+/// follow: `"0.10000000000000000000000000000"` (29 places) is
+/// `0.1000000000000000` and `"9007199254740991.0"` is
+/// `9007199254740991`. A zero gets its exponent moved into -28 to 15.
 ///
 /// Returns `Error(InputTooLong)` for input over 1,000 bytes and
 /// `Error(ParsedValueTooLarge)` for a value outside the range in the
@@ -197,9 +201,37 @@ pub fn parse(input: String) -> Result(Decimal, ParseError) {
   let trimmed = trim_unicode_whitespace(input)
   use <- bool.guard(when: trimmed == "", return: Error(EmptyInput))
   use #(mantissa, shift) <- result.try(split_scientific_notation(trimmed))
-  use base <- result.try(parse_plain_decimal(mantissa))
-  checked(base.coefficient, base.exponent + shift)
+  use parsed <- result.try(parse_plain_decimal(mantissa))
+  fit_parsed(parsed, -parsed.fraction_digits + shift)
   |> result.replace_error(ParsedValueTooLarge)
+}
+
+// The parsed digits are `state.digits` followed by `state.zeros` zeros,
+// at `exponent`. Keeps as many of the zeros as fit: no exponent below
+// -28 and no coefficient past 2^53 - 1.
+fn fit_parsed(
+  state: ParseState,
+  exponent: Int,
+) -> Result(Decimal, ArithmeticError) {
+  case state.digits {
+    0 -> checked(0, int.clamp(exponent, min: min_exponent, max: max_exponent))
+    digits -> {
+      let limit = int.min(state.zeros, exponent + state.zeros - min_exponent)
+      use <- bool.guard(when: limit < 0, return: Error(PrecisionExceeded))
+      let #(coefficient, kept) = keep_zeros(digits, 0, limit)
+      checked(state.sign * coefficient, exponent + state.zeros - kept)
+    }
+  }
+}
+
+// Appends zeros to `coefficient` up to `limit` of them while it stays
+// within 2^53 - 1, so at most 15 steps.
+fn keep_zeros(coefficient: Int, kept: Int, limit: Int) -> #(Int, Int) {
+  use <- bool.guard(
+    when: kept >= limit || coefficient > max_safe_coefficient / 10,
+    return: #(coefficient, kept),
+  )
+  keep_zeros(coefficient * 10, kept + 1, limit)
 }
 
 fn trim_unicode_whitespace(input: String) -> String {
@@ -276,13 +308,14 @@ fn find_exponent_marker(
   }
 }
 
-fn parse_plain_decimal(mantissa: String) -> Result(Decimal, ParseError) {
+fn parse_plain_decimal(mantissa: String) -> Result(ParseState, ParseError) {
   use <- bool.guard(when: mantissa == "", return: Error(EmptyInput))
   parse_loop(ParseState(
     characters: string.to_graphemes(mantissa),
     position: 0,
     sign: 1,
     digits: 0,
+    zeros: 0,
     fraction_digits: 0,
     saw_dot: False,
     saw_sign: False,
@@ -295,7 +328,10 @@ type ParseState {
     characters: List(String),
     position: Int,
     sign: Int,
+    // The digits read so far without their trailing zeros, and how many
+    // trailing zeros follow them.
     digits: Int,
+    zeros: Int,
     fraction_digits: Int,
     saw_dot: Bool,
     saw_sign: Bool,
@@ -306,7 +342,7 @@ type ParseState {
 // Reads one character per step. Each step returns the next state and the
 // loop calls itself last, so it runs in constant stack on both targets
 // however long the input is.
-fn parse_loop(state: ParseState) -> Result(Decimal, ParseError) {
+fn parse_loop(state: ParseState) -> Result(ParseState, ParseError) {
   case state.characters {
     [] -> finish_parse(state)
     [character, ..rest] -> {
@@ -338,13 +374,13 @@ fn parse_character(
   }
 }
 
-fn finish_parse(state: ParseState) -> Result(Decimal, ParseError) {
+fn finish_parse(state: ParseState) -> Result(ParseState, ParseError) {
   use <- bool.guard(when: !state.saw_digit, return: Error(NoDigits))
   use <- bool.guard(
     when: state.digits > max_safe_coefficient,
     return: Error(ParsedValueTooLarge),
   )
-  Ok(Decimal(state.sign * state.digits, -state.fraction_digits))
+  Ok(state)
 }
 
 fn parse_sign(
@@ -372,13 +408,29 @@ fn parse_digit(next: ParseState, value: Int) -> ParseState {
     True -> next.fraction_digits + 1
     False -> next.fraction_digits
   }
-  // Stop accumulating once the digits are out of range so that a long
-  // input does not build a huge integer.
-  let digits = case next.digits > max_safe_coefficient {
-    True -> next.digits
-    False -> next.digits * 10 + value
+  // A zero only counts towards the trailing zeros, so a long run of
+  // them does not build a huge integer. Past 2^53 - 1 the digits stay
+  // just above it.
+  let #(digits, zeros) = case value, next.digits {
+    0, _ -> #(next.digits, next.zeros + 1)
+    _, 0 -> #(value, 0)
+    _, digits -> #(append_digit(digits, next.zeros + 1, value), 0)
   }
-  ParseState(..next, digits:, fraction_digits:, saw_digit: True)
+  ParseState(..next, digits:, zeros:, fraction_digits:, saw_digit: True)
+}
+
+// digits × 10^places + value, or 2^53 when that passes 2^53 - 1.
+fn append_digit(digits: Int, places: Int, value: Int) -> Int {
+  let too_large = max_safe_coefficient + 1
+  use <- bool.guard(
+    when: digits > max_safe_coefficient || places > 15,
+    return: too_large,
+  )
+  let scale = pow_10(places)
+  case digits > { max_safe_coefficient - value } / scale {
+    True -> too_large
+    False -> digits * scale + value
+  }
 }
 
 fn digit_value(character: String) -> Result(Int, Nil) {
@@ -547,13 +599,13 @@ pub fn absolute(decimal: Decimal) -> Decimal {
   Decimal(..decimal, coefficient: int.absolute_value(decimal.coefficient))
 }
 
-/// Adds two decimals without rounding. Adding zero returns the other
-/// decimal unchanged.
+/// Adds two decimals without rounding.
 ///
 /// The sum is exact before it is fitted into the range, even when one
 /// operand scaled to the other's exponent passes 2^53 − 1. It has the
-/// smaller of the two exponents when its coefficient fits there, so
-/// `1 + -0.8999999999999999` is `0.1000000000000001`. Otherwise it drops
+/// smaller of the two exponents when its coefficient fits there, as in
+/// Python's `decimal`, so `1 + -0.8999999999999999` is
+/// `0.1000000000000001` and `0.00 + 5` is `5.00`. Otherwise it drops
 /// the fewest trailing zeros that bring the coefficient within
 /// 2^53 − 1, so `1 + 0.1000000000000000` is `1.100000000000000`, with
 /// the exponent -15.
@@ -565,8 +617,6 @@ pub fn absolute(decimal: Decimal) -> Decimal {
 pub fn add(a: Decimal, b: Decimal) -> Result(Decimal, ArithmeticError) {
   case a.coefficient, b.coefficient {
     0, 0 -> Ok(Decimal(0, int.min(a.exponent, b.exponent)))
-    0, _ -> Ok(b)
-    _, 0 -> Ok(a)
     _, _ -> {
       let exponent = int.min(a.exponent, b.exponent)
       let aligned = case
@@ -588,8 +638,8 @@ pub fn subtract(a: Decimal, b: Decimal) -> Result(Decimal, ArithmeticError) {
   add(a, negate(b))
 }
 
-// The sum of two non-zero decimals whose aligned coefficients, or their
-// sum, pass 2^53 - 1, computed in limbs so both targets get every digit.
+// The sum of two decimals, not both zero, whose aligned coefficients, or
+// their sum, pass 2^53 - 1, computed in limbs so both targets get every digit.
 // The two coefficients are at most 43 places apart, so the sum has at
 // most 60 digits.
 fn exact_sum(
@@ -626,8 +676,10 @@ fn exact_sum(
 /// zero product has its exponent moved into -28 to 15.
 ///
 /// Returns `Error(PrecisionExceeded)` when the product is out of range,
-/// including a product with a non-zero digit past 28 places or one that
-/// needs more than 2^53 − 1 in its coefficient after its zeros go.
+/// including a product with a non-zero digit past 28 places, such as
+/// `1000.01 × 1e-27`, or one that needs more than 2^53 − 1 in its
+/// coefficient after its zeros go. `multiply` never rounds; to round a
+/// product, `money.multiply` rounds to a currency's minor unit.
 ///
 pub fn multiply(a: Decimal, b: Decimal) -> Result(Decimal, ArithmeticError) {
   let exponent = a.exponent + b.exponent
