@@ -7,6 +7,8 @@ and this project is expected to follow [Semantic Versioning](https://semver.org/
 
 ## [Unreleased]
 
+## [0.13.3] - 2026-11-23
+
 ### Fixed
 
 - `interest.future_value`, `present_value`, `payment` and `schedule` returned `ArithmeticFailed(PrecisionExceeded)` for a rate written to 16 places, such as the monthly rate `0.0041666666666667` for 5% a year, because `1 + rate` needed a 17-digit coefficient. The rate in `1 + rate` is now rounded half-even to the most places at which the sum can be computed: a rate between -1 and 1 with more than 15 places is rounded to 15, which moves it by at most 5e-16. A rate that worked before is used as it is, so no result that succeeded before changes. Each period's interest in `schedule` and the numerator of `payment` still use the rate as given. A 200,000 loan at that rate over 360 months now pays 1073.64 a month, the same as Python's `decimal` gives.
