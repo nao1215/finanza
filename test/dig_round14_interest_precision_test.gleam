@@ -3,9 +3,8 @@
 //// A rate written to 16 places, such as `0.0041666666666667` for 5% a
 //// year over 12 months, made `1 + rate` need a 17-digit coefficient, so
 //// `future_value`, `present_value`, `payment` and `schedule` returned
-//// `PrecisionExceeded`. `effective_annual_rate` divides the nominal rate
-//// at 7 places first, so it did not fail, and is checked here only as a
-//// reference.
+//// `PrecisionExceeded`. `effective_annual_rate` divided the nominal rate
+//// first, so it did not fail, and is checked here only as a reference.
 ////
 //// On JavaScript, `schedule` recursed once per period without a tail
 //// call, so 1200 periods overflowed the call stack. The loops of
@@ -21,21 +20,17 @@
 //// the last pays what is left. Given the payment, every row is exact, so
 //// the rows are asserted exactly.
 ////
-//// Tolerance: `payment` may be one cent off Python's value, and only
-//// `payment`. The fix adds one rounding: `1 + rate` does not fit for any
-//// rate here, so it uses the rate rounded half-even to 15 places, which
-//// moves the rate by at most 5e-16 and the payments below by at most 2e-10. `payment`
-//// compounds at 7 places, as documented in `finanza/interest`, and that
-//// moves the unrounded payment by up to 3.2e-4 for the annual rates of 1%
-//// to 20% over 360 and 1200 months (measured with the same rounding in
-//// Python). When the exact payment is that close to a half-cent, the
-//// rounded payment is one cent off: 7% gives 1330.61 against
-//// 1330.604990. `future_value` works at `digits + 2` places, at least 7,
-//// on the amount itself, so its error stays below 1e-6 here and it is
-//// asserted exactly.
+//// Every value is asserted exactly. This file used to allow `payment`
+//// one cent off Python's value, because it compounded at 7 places and
+//// 7% a year gave 1330.61 against an exact 1330.604990. Since then
+//// `payment` keeps every intermediate value at the most places that fit
+//// and uses the rate as given, so it gives 1330.60; see
+//// `dig_round15_full_precision_test.gleam` for how close to a half-cent
+//// a payment can be and still round right. `future_value` works at
+//// `digits + 2` places, at least 7, on the amount itself, so its error
+//// stays below 1e-6 here.
 
 import gleam/list
-import gleam/order
 import gleam/result
 import gleam/string
 
@@ -119,7 +114,8 @@ pub fn schedule_with_a_sixteen_place_rate_test() {
 
 pub fn negative_sixteen_place_rate_test() {
   // 1 + rate is 0.9958333333333333, a 16-digit coefficient past 2^53 - 1,
-  // so the rate is used at 15 places: 1000 × 0.995833333333333^12.
+  // but each period grows by the exact x × (1 + rate), so the rate is used
+  // as given: 1000 × 0.9958333333333333^12 = 951.13.
   let rate = support.parse("-0.0041666666666667")
   assert interest.future_value(
       present: support.int(1000),
@@ -131,10 +127,11 @@ pub fn negative_sixteen_place_rate_test() {
     == Ok("951.13")
 }
 
-pub fn sixteen_place_rate_is_rounded_even_when_the_sum_fits_test() {
-  // 1 + -0.8999999999999999 = 0.1000000000000001 would fit, but
-  // `decimal.add` scales 1 to 16 places first, which is past 2^53 - 1, so
-  // the rate is rounded to 15 places: 1000 × 0.100000000000000.
+pub fn sixteen_place_rate_is_used_as_given_when_the_sum_fits_test() {
+  // 1 + -0.8999999999999999 = 0.1000000000000001 fits. `decimal.add` used
+  // to scale 1 to 16 places first, which is past 2^53 - 1, so the rate
+  // was rounded to 15 places and these were 100.0000000000000 and
+  // 10000.00000000000.
   let rate = support.parse("-0.8999999999999999")
   assert interest.future_value(
       present: support.int(1000),
@@ -143,7 +140,16 @@ pub fn sixteen_place_rate_is_rounded_even_when_the_sum_fits_test() {
       digits: 13,
     )
     |> text
-    == Ok("100.0000000000000")
+    == Ok("100.0000000000001")
+  // 1000 / 0.1000000000000001 = 9999.99999999999000000000000001...
+  assert interest.present_value(
+      future: support.int(1000),
+      rate_per_period: rate,
+      periods: 1,
+      digits: 11,
+    )
+    |> text
+    == Ok("9999.99999999999")
 }
 
 // --- monthly rates from annual rates of 1% to 20% ----------------------------
@@ -153,8 +159,6 @@ type Case {
     rate: String,
     // Python's payment, rounded half-even to cents.
     payment: String,
-    // What `interest.payment` returns, which `schedule` pays each period.
-    returned: String,
     future_value: String,
     future_value_120: String,
     first: #(String, String, String, String),
@@ -171,7 +175,6 @@ const cases = [
   Case(
     rate: "0.0008333333333333",
     payment: "643.28",
-    returned: "643.28",
     future_value: "1349.69",
     future_value_120: "136435.16",
     first: #("643.28", "166.67", "476.61", "199523.39"),
@@ -182,7 +185,6 @@ const cases = [
   Case(
     rate: "0.0016666666666667",
     payment: "739.24",
-    returned: "739.24",
     future_value: "1821.21",
     future_value_120: "150765.35",
     first: #("739.24", "333.33", "405.91", "199594.09"),
@@ -193,7 +195,6 @@ const cases = [
   Case(
     rate: "0.0041666666666667",
     payment: "1073.64",
-    returned: "1073.64",
     future_value: "4467.74",
     future_value_120: "203334.49",
     first: #("1073.64", "833.33", "240.31", "199759.69"),
@@ -203,20 +204,18 @@ const cases = [
   ),
   Case(
     rate: "0.0058333333333333",
-    payment: "1330.60",
     // The exact payment is 1330.604990, 1e-5 below a half-cent.
-    returned: "1330.61",
+    payment: "1330.60",
     future_value: "8116.50",
     future_value_120: "248106.32",
-    first: #("1330.61", "1166.67", "163.94", "199836.06"),
-    middle_balance: "148036.14",
-    last: #("1324.31", "7.68", "1316.63", "0.00"),
-    total_interest: "279013.30",
+    first: #("1330.60", "1166.67", "163.93", "199836.07"),
+    middle_balance: "148039.28",
+    last: #("1336.54", "7.75", "1328.79", "0.00"),
+    total_interest: "279021.94",
   ),
   Case(
     rate: "0.0083333333333333",
     payment: "1755.14",
-    returned: "1755.14",
     future_value: "19837.40",
     future_value_120: "334202.63",
     first: #("1755.14", "1666.67", "88.47", "199911.53"),
@@ -227,7 +226,6 @@ const cases = [
   Case(
     rate: "0.0091666666666667",
     payment: "1904.65",
-    returned: "1904.65",
     future_value: "26708.10",
     future_value_120: "369030.78",
     first: #("1904.65", "1833.33", "71.32", "199928.68"),
@@ -238,7 +236,6 @@ const cases = [
   Case(
     rate: "0.0166666666666667",
     payment: "3342.04",
-    returned: "3342.04",
     future_value: "383963.96",
     future_value_120: "897315.36",
     first: #("3342.04", "3333.33", "8.71", "199991.29"),
@@ -250,18 +247,14 @@ const cases = [
 
 pub fn monthly_payment_matches_python_test() {
   list.each(cases, fn(case_) {
-    let assert Ok(returned) =
-      interest.payment(
+    assert interest.payment(
         principal: support.int(200_000),
         rate_per_period: support.parse(case_.rate),
         periods: 360,
         digits: 2,
       )
-    assert decimal.to_string(returned) == case_.returned
-    let assert Ok(difference) =
-      decimal.subtract(returned, support.parse(case_.payment))
-    assert decimal.compare(decimal.absolute(difference), support.parse("0.01"))
-      != order.Gt
+      |> text
+      == Ok(case_.payment)
   })
 }
 
@@ -376,15 +369,15 @@ pub fn growth_over_1200_periods_test() {
 }
 
 pub fn effective_annual_rate_compounded_1200_times_test() {
-  // The rate per period is 0.05 / 1200 at 7 places, 0.0000417, so this
-  // is (1.0000417)^1200 - 1 = 0.051312..., not the exact 0.051270.
+  // (1 + 0.05 / 1200)^1200 - 1 = 0.0512700013... Dividing the rate at 7
+  // places, 0.0000417, used to give 0.051312.
   assert interest.effective_annual_rate(
       nominal_rate: support.parse("0.05"),
       compounds_per_year: 1200,
       digits: 6,
     )
     |> text
-    == Ok("0.051312")
+    == Ok("0.051270")
 }
 
 pub fn periods_past_1200_are_rejected_test() {

@@ -67,6 +67,110 @@ pub fn multiply(
   }
 }
 
+/// Returns `a × b` plus every one of `addends`, rounded half-even to the
+/// most places up to `at_most`, and no fewer than 0, at which the result
+/// is in range. The value is exact before it is rounded once, so
+/// `multiply_add(x, rate, plus: [x], ..)` is `x × (1 + rate)` rounded,
+/// even when `1 + rate` has too many digits to be a `Decimal`.
+///
+/// Returns `Error(PrecisionExceeded)` when `at_most` is outside 0 to 28
+/// or the value is out of range even at 0 places.
+///
+pub fn multiply_add(
+  a: Decimal,
+  b: Decimal,
+  plus addends: List(Decimal),
+  at_most places: Int,
+) -> Result(Decimal, decimal.ArithmeticError) {
+  use <- bool.guard(
+    when: places < 0 || places > 28,
+    return: Error(decimal.PrecisionExceeded),
+  )
+  let product =
+    Term(
+      sign: sign_of(a) * sign_of(b),
+      limbs: limb.product_limbs(
+        int.absolute_value(decimal.coefficient(a)),
+        int.absolute_value(decimal.coefficient(b)),
+      ),
+      exponent: decimal.exponent(a) + decimal.exponent(b),
+    )
+  let terms = [
+    product,
+    ..list.map(addends, fn(addend) {
+      Term(
+        sign: sign_of(addend),
+        limbs: limb.limbs(int.absolute_value(decimal.coefficient(addend))),
+        exponent: decimal.exponent(addend),
+      )
+    })
+  ]
+  let exponent =
+    list.fold(terms, product.exponent, fn(lowest, term) {
+      int.min(lowest, term.exponent)
+    })
+  // A product's exponent is within -56 to 30 and an addend's within -28
+  // to 15, so a term is shifted by at most 71 places and the sum has
+  // fewer than 120 digits.
+  let #(sign, total) =
+    list.fold(terms, #(1, []), fn(total, term) {
+      limb.add(total, #(
+        term.sign,
+        limb.shift(term.limbs, zeros: term.exponent - exponent),
+      ))
+    })
+  let digits = limb.to_digits(limb.trim(total))
+  case limb.significant(digits) {
+    0 ->
+      decimal.new(coefficient: 0, exponent: -places)
+      |> result.replace_error(decimal.PrecisionExceeded)
+    // A coefficient within 2^53 - 1 has at most 16 digits, so no more
+    // places than leave 16 of them can fit.
+    significant ->
+      most_places(
+        digits,
+        exponent,
+        sign,
+        int.min(places, 16 - significant - exponent),
+      )
+  }
+}
+
+type Term {
+  Term(sign: Int, limbs: List(Int), exponent: Int)
+}
+
+// Rounds `digits × 10^exponent` half-even at `places`, or at the most
+// places below it at which the coefficient fits. Rounding up can add a
+// digit, so this takes at most two steps after the first.
+fn most_places(
+  digits: List(Int),
+  exponent: Int,
+  sign: Int,
+  places: Int,
+) -> Result(Decimal, decimal.ArithmeticError) {
+  use <- bool.guard(when: places < 0, return: Error(decimal.PrecisionExceeded))
+  let rounded =
+    round_digits(digits, -places - exponent, sign, decimal.HalfEven)
+    |> result.try(fn(coefficient) {
+      decimal.new(coefficient:, exponent: -places)
+      |> result.replace_error(decimal.PrecisionExceeded)
+    })
+  case rounded {
+    Ok(value) -> Ok(value)
+    Error(error) ->
+      case places > 0 {
+        True -> most_places(digits, exponent, sign, places - 1)
+        False -> Error(error)
+      }
+  }
+}
+
+fn sign_of(value: Decimal) -> Int {
+  use <- bool.guard(when: decimal.is_negative(value), return: -1)
+  1
+}
+
 // Drops the `dropped` least significant of `digits` (listed least
 // significant first), the ones past the places asked for, and rounds
 // what is left, or pads it with zeros when `dropped` is negative.
