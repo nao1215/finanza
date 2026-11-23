@@ -547,10 +547,20 @@ pub fn absolute(decimal: Decimal) -> Decimal {
   Decimal(..decimal, coefficient: int.absolute_value(decimal.coefficient))
 }
 
-/// Adds two decimals. The result has the smaller of the two exponents,
-/// except that adding zero returns the other decimal unchanged.
+/// Adds two decimals without rounding. The result has the smaller of the
+/// two exponents, except that adding zero returns the other decimal
+/// unchanged.
 ///
-/// Returns `Error(PrecisionExceeded)` when the sum is out of range.
+/// The sum is exact before it is fitted into the range, even when one
+/// operand scaled to the other's exponent passes 2^53 − 1. When the
+/// coefficient of the sum passes 2^53 − 1, the sum drops the fewest
+/// trailing zeros that bring it within, so `1 + -0.8999999999999999` is
+/// `0.1000000000000001` and `1 + 0.1000000000000000` is
+/// `1.100000000000000`.
+///
+/// Returns `Error(PrecisionExceeded)` when the sum is out of range,
+/// including one that needs more than 2^53 − 1 in its coefficient after
+/// its zeros go, such as `1e15 + 1e-28`.
 ///
 pub fn add(a: Decimal, b: Decimal) -> Result(Decimal, ArithmeticError) {
   case a.coefficient, b.coefficient {
@@ -559,18 +569,50 @@ pub fn add(a: Decimal, b: Decimal) -> Result(Decimal, ArithmeticError) {
     _, 0 -> Ok(a)
     _, _ -> {
       let exponent = int.min(a.exponent, b.exponent)
-      use left <- result.try(scale_up(a.coefficient, a.exponent - exponent))
-      use right <- result.try(scale_up(b.coefficient, b.exponent - exponent))
-      checked(left + right, exponent)
+      let aligned = case
+        scale_up(a.coefficient, a.exponent - exponent),
+        scale_up(b.coefficient, b.exponent - exponent)
+      {
+        Ok(left), Ok(right) -> checked(left + right, exponent)
+        _, _ -> Error(PrecisionExceeded)
+      }
+      result.lazy_or(aligned, fn() { exact_sum(a, b, exponent) })
     }
   }
 }
 
-/// Subtracts `b` from `a`. The result has the smaller of the two
-/// exponents.
+/// Subtracts `b` from `a` without rounding, the same as adding
+/// `negate(b)`.
 ///
 pub fn subtract(a: Decimal, b: Decimal) -> Result(Decimal, ArithmeticError) {
   add(a, negate(b))
+}
+
+// The sum of two non-zero decimals whose aligned coefficients, or their
+// sum, pass 2^53 - 1, computed in limbs so both targets get every digit.
+// The two coefficients are at most 43 places apart, so the sum has at
+// most 60 digits.
+fn exact_sum(
+  a: Decimal,
+  b: Decimal,
+  exponent: Int,
+) -> Result(Decimal, ArithmeticError) {
+  let term = fn(value: Decimal) {
+    #(
+      sign_of(value.coefficient),
+      limb.shift(
+        limb.limbs(int.absolute_value(value.coefficient)),
+        zeros: value.exponent - exponent,
+      ),
+    )
+  }
+  let #(sign, limbs) = limb.add(term(a), term(b))
+  use #(magnitude, dropped) <- result.try(drop_zeros(
+    limb.to_digits(limb.trim(limbs)),
+    0,
+    0,
+  ))
+  checked(sign * magnitude, exponent + dropped)
 }
 
 /// Multiplies two decimals without rounding. The exponents add up, so
@@ -623,8 +665,8 @@ fn drop_small_zeros(
 // Drops trailing zeros from `digits`, the least significant digit
 // first: at least `at_least` of them, and then as few more as bring the
 // value within 2^53 - 1. Returns the value and how many were dropped.
-// The list has 35 digits, so this takes at most 35 steps of at most 35
-// digits each.
+// A product has 35 digits and a sum at most 63, seven for each of its
+// limbs, so this takes at most 63 steps of at most 63 digits each.
 fn drop_zeros(
   digits: List(Int),
   dropped: Int,
