@@ -4,11 +4,11 @@
 
 ## Examples and unit tests
 
-Every module has a test file under `test/`: decimal parsing, arithmetic and every rounding mode at `2.5`, `3.5`, `10.005` and their negatives, currency formatting and allocation, interest and amortisation, and card validation with public test PANs only. `test/dig_round1_boundary_test.gleam` and `test/dig_round9_boundary_test.gleam` probe the limits (JavaScript's safe-integer cap, empty and huge inputs). `test/readme_test.gleam` runs the README snippets.
+Every module has a test file under `test/`: decimal parsing, arithmetic and every rounding mode at `2.5`, `3.5`, `10.005` and their negatives, money formatting and allocation, interest and amortization schedules, and card validation with public test PANs only. `test/dig_round1_boundary_test.gleam` and `test/dig_round9_boundary_test.gleam` probe the limits (JavaScript's safe-integer cap, empty and huge inputs). `test/readme_test.gleam` runs the README examples, and `test/support.gleam` holds the `let assert` helpers for inputs known to be in range.
 
 ## Generated properties
 
-`test/property/` and `test/dig_round2_property_test.gleam` / `test/dig_round8_property_test.gleam` use metamon to check algebraic laws: commutativity, associativity and distributivity of decimal arithmetic, string round trips, `allocate` preserving the total, Luhn on an appended check digit, and an amortisation schedule whose balance closes to zero.
+`test/property/` and `test/dig_round2_property_test.gleam` / `test/dig_round8_property_test.gleam` use metamon to check algebraic laws: commutativity, associativity and distributivity of decimal arithmetic, string round trips, `allocate` preserving the total, Luhn on an appended check digit, and an amortization schedule whose balance closes to zero.
 
 ## Metamorphic relations
 
@@ -16,7 +16,7 @@ Every module has a test file under `test/`: decimal parsing, arithmetic and ever
 
 ## Differential testing
 
-`test/dig_round5_differential_test.gleam` and `test/dig_round10_differential_test.gleam` compare arithmetic, rounding, PMT, FV, PV, EAR and amortisation with values computed by Python `decimal` and published Excel examples. `test/property/decimal_oracle_test.gleam` compares `decimal.round` and `decimal.divide` with an oracle that does one integer division and applies each of the seven rounding modes to the remainder, for random coefficients, exponents and precisions, with ties (`...5`, `...50`) mixed in. It also checks that `round` always returns exactly `digits` fractional places.
+`test/dig_round5_differential_test.gleam` and `test/dig_round10_differential_test.gleam` compare arithmetic, rounding, PMT, FV, PV, EAR and amortization with values computed by Python `decimal` and published Excel examples. `test/property/decimal_oracle_test.gleam` compares `decimal.round` and `decimal.divide` with an oracle that does one integer division and applies each of the seven rounding modes to the remainder, for random coefficients, exponents and precisions, with ties (`...5`, `...50`) mixed in. It also checks that `round` always returns exactly `digits` fractional places.
 
 ## Fuzzing
 
@@ -42,4 +42,4 @@ The first run showed that brand detection was tested with one PAN per brand, so 
 - `interest` (8) and `amortization` (1): the argument checks at their exact bounds (zero periods, zero digits) and the extra digits used for intermediate rounding.
 - `currency` (1): the remainder distribution of `allocate` when a share is exactly zero.
 
-Brand detection checks UnionPay (`62`, 16 to 19 digits) before Discover, so Discover's co-branded range 622126 to 622925 is reported as UnionPay; the Discover branch for that range is never reached.
+Brand detection checks UnionPay (`62`, 16 to 19 digits) before Discover, so Discover's co-branded range 622126 to 622925 is reported as UnionPay. The Discover rule for that range could never match and was removed in 0.12.0.

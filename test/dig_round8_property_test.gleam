@@ -18,12 +18,10 @@ import gleam/list
 import gleam/order
 import gleeunit/should
 
-import finanza/currency
-import finanza/currency/catalog
 import finanza/decimal
-import finanza/decimal/rounding
 import finanza/interest
-import finanza/interest/amortization
+import finanza/money
+import support
 
 const trials: Int = 200
 
@@ -49,13 +47,13 @@ fn int_in_range(prng: Prng, low: Int, high: Int) -> #(Int, Prng) {
 fn gen_decimal(prng: Prng) -> #(decimal.Decimal, Prng) {
   let #(coef, p1) = int_in_range(prng, -100_000, 100_000)
   let #(exp, p2) = int_in_range(p1, -4, 2)
-  #(decimal.new(coefficient: coef, exponent: exp), p2)
+  #(support.new(coefficient: coef, exponent: exp), p2)
 }
 
 fn gen_non_negative_decimal(prng: Prng) -> #(decimal.Decimal, Prng) {
   let #(coef, p1) = int_in_range(prng, 0, 100_000)
   let #(exp, p2) = int_in_range(p1, -4, 0)
-  #(decimal.new(coefficient: coef, exponent: exp), p2)
+  #(support.new(coefficient: coef, exponent: exp), p2)
 }
 
 fn iterate(prng: Prng, n: Int, step: fn(Prng) -> Prng) -> Prng {
@@ -240,11 +238,11 @@ pub fn money_add_commutative_test() -> Nil {
   iterate(prng, trials, fn(p) {
     let #(a_u, p1) = int_in_range(p, -1_000_000, 1_000_000)
     let #(b_u, p2) = int_in_range(p1, -1_000_000, 1_000_000)
-    let a = currency.from_minor(a_u, catalog.usd())
-    let b = currency.from_minor(b_u, catalog.usd())
-    let assert Ok(ab) = currency.add(a, b)
-    let assert Ok(ba) = currency.add(b, a)
-    currency.equal(ab, ba)
+    let a = support.from_minor(a_u, money.usd)
+    let b = support.from_minor(b_u, money.usd)
+    let assert Ok(ab) = money.add(a, b)
+    let assert Ok(ba) = money.add(b, a)
+    support.money_equal(ab, ba)
     |> should.be_true
     p2
   })
@@ -257,8 +255,8 @@ pub fn allocate_length_matches_ratios_test() -> Nil {
     let #(units, p1) = int_in_range(p, -1_000_000, 1_000_000)
     let #(n, p2) = int_in_range(p1, 1, 10)
     let ratios = build_ratios(n)
-    let money = currency.from_minor(units, catalog.usd())
-    let assert Ok(parts) = currency.allocate(money, ratios)
+    let money = support.from_minor(units, money.usd)
+    let assert Ok(parts) = money.allocate(money, ratios)
     list.length(parts)
     |> should.equal(n)
     p2
@@ -294,14 +292,14 @@ pub fn simple_interest_linear_in_periods_test() -> Nil {
     let #(rate, p2) = gen_non_negative_decimal(p1)
     let #(periods, p3) = int_in_range(p2, 1, 100)
     case
-      interest.simple_interest(principal, rate, periods, 8),
-      interest.simple_interest(principal, rate, periods * 2, 8)
+      interest.simple(principal, rate, periods, 8),
+      interest.simple(principal, rate, periods * 2, 8)
     {
       Ok(i_n), Ok(i_2n) -> {
-        let assert Ok(double) = decimal.multiply(i_n, decimal.from_int(2))
+        let assert Ok(double) = decimal.multiply(i_n, support.int(2))
         decimal.equal(
-          decimal.round(double, 6, rounding.HalfEven),
-          decimal.round(i_2n, 6, rounding.HalfEven),
+          support.round(double, 6, decimal.HalfEven),
+          support.round(i_2n, 6, decimal.HalfEven),
         )
         |> should.be_true
       }
@@ -318,7 +316,7 @@ pub fn ear_freq_one_identity_test() -> Nil {
   iterate(prng, trials, fn(p) {
     let #(rate, p1) = gen_non_negative_decimal(p)
     let assert Ok(ear) = interest.effective_annual_rate(rate, 1, 6)
-    decimal.equal(decimal.round(ear, 6, rounding.HalfEven), rate)
+    decimal.equal(support.round(ear, 6, decimal.HalfEven), rate)
     |> should.be_true
     p1
   })
@@ -332,7 +330,7 @@ pub fn fv_rate_zero_equals_principal_test() -> Nil {
     let #(periods, p2) = int_in_range(p1, 1, 50)
     let assert Ok(fv) =
       interest.future_value(present, decimal.zero(), periods, 6)
-    decimal.equal(fv, decimal.round(present, 6, rounding.HalfEven))
+    decimal.equal(fv, support.round(present, 6, decimal.HalfEven))
     |> should.be_true
     p2
   })
@@ -344,13 +342,13 @@ pub fn amortization_balance_closes_to_zero_test() -> Nil {
   let prng = Prng(state: 383)
   iterate(prng, 60, fn(p) {
     let #(principal_int, p1) = int_in_range(p, 1, 1_000_000)
-    let principal = decimal.new(coefficient: principal_int, exponent: 0)
+    let principal = support.new(coefficient: principal_int, exponent: 0)
     let #(rate_num, p2) = int_in_range(p1, 1, 500)
-    let rate = decimal.new(coefficient: rate_num, exponent: -4)
+    let rate = support.new(coefficient: rate_num, exponent: -4)
     let #(periods, p3) = int_in_range(p2, 1, 30)
-    let assert Ok(rows) = amortization.schedule(principal, rate, periods, 2)
+    let assert Ok(rows) = interest.schedule(principal, rate, periods, 2)
     let assert Ok(last) = list.last(rows)
-    decimal.is_zero(amortization.balance(last))
+    decimal.is_zero(last.balance)
     |> should.be_true
     p3
   })
@@ -361,14 +359,14 @@ pub fn amortization_principal_paid_sums_test() -> Nil {
   let prng = Prng(state: 389)
   iterate(prng, 60, fn(p) {
     let #(principal_int, p1) = int_in_range(p, 1, 100_000)
-    let principal = decimal.new(coefficient: principal_int, exponent: 0)
+    let principal = support.new(coefficient: principal_int, exponent: 0)
     let #(rate_num, p2) = int_in_range(p1, 1, 500)
-    let rate = decimal.new(coefficient: rate_num, exponent: -4)
+    let rate = support.new(coefficient: rate_num, exponent: -4)
     let #(periods, p3) = int_in_range(p2, 1, 24)
-    let assert Ok(rows) = amortization.schedule(principal, rate, periods, 2)
+    let assert Ok(rows) = interest.schedule(principal, rate, periods, 2)
     let sum =
       list.fold(rows, decimal.zero(), fn(acc, row) {
-        let assert Ok(next) = decimal.add(acc, amortization.principal_paid(row))
+        let assert Ok(next) = decimal.add(acc, row.principal_paid)
         next
       })
     decimal.equal(sum, principal)
@@ -382,12 +380,12 @@ pub fn amortization_balance_monotonic_test() -> Nil {
   let prng = Prng(state: 397)
   iterate(prng, 60, fn(p) {
     let #(principal_int, p1) = int_in_range(p, 1000, 100_000)
-    let principal = decimal.new(coefficient: principal_int, exponent: 0)
+    let principal = support.new(coefficient: principal_int, exponent: 0)
     let #(rate_num, p2) = int_in_range(p1, 1, 200)
-    let rate = decimal.new(coefficient: rate_num, exponent: -4)
+    let rate = support.new(coefficient: rate_num, exponent: -4)
     let #(periods, p3) = int_in_range(p2, 2, 20)
-    let assert Ok(rows) = amortization.schedule(principal, rate, periods, 2)
-    let balances = list.map(rows, amortization.balance)
+    let assert Ok(rows) = interest.schedule(principal, rate, periods, 2)
+    let balances = list.map(rows, fn(row) { row.balance })
     check_monotonic_nonincreasing(balances)
     p3
   })

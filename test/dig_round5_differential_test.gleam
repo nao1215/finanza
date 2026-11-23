@@ -17,16 +17,16 @@ import gleeunit/should
 
 import finanza/card
 import finanza/decimal
-import finanza/decimal/rounding
 import finanza/interest
+import support
 
 // --- Decimal vs Python decimal ------------------------------------------
 
 pub fn add_vs_python_decimal_test() -> Nil {
   // Python: Decimal('0.1') + Decimal('0.2') == Decimal('0.3') (exact).
   // This is the canonical case that fails under IEEE 754 floats.
-  let assert Ok(a) = decimal.from_string("0.1")
-  let assert Ok(b) = decimal.from_string("0.2")
+  let assert Ok(a) = decimal.parse("0.1")
+  let assert Ok(b) = decimal.parse("0.2")
   let assert Ok(sum) = decimal.add(a, b)
   decimal.to_string(sum)
   |> should.equal("0.3")
@@ -34,8 +34,8 @@ pub fn add_vs_python_decimal_test() -> Nil {
 
 pub fn multiply_vs_python_decimal_test() -> Nil {
   // Python: Decimal('1.1') * Decimal('1.1') == Decimal('1.21').
-  let assert Ok(a) = decimal.from_string("1.1")
-  let assert Ok(b) = decimal.from_string("1.1")
+  let assert Ok(a) = decimal.parse("1.1")
+  let assert Ok(b) = decimal.parse("1.1")
   let assert Ok(prod) = decimal.multiply(a, b)
   decimal.to_string(prod)
   |> should.equal("1.21")
@@ -43,9 +43,9 @@ pub fn multiply_vs_python_decimal_test() -> Nil {
 
 pub fn divide_vs_python_decimal_test() -> Nil {
   // Python: Decimal('1') / Decimal('3') quantised to 6 dp = Decimal('0.333333').
-  let assert Ok(a) = decimal.from_string("1")
-  let assert Ok(b) = decimal.from_string("3")
-  let assert Ok(q) = decimal.divide(a, b, 6, rounding.HalfEven)
+  let assert Ok(a) = decimal.parse("1")
+  let assert Ok(b) = decimal.parse("3")
+  let assert Ok(q) = decimal.divide(a, b, 6, decimal.HalfEven)
   decimal.to_string(q)
   |> should.equal("0.333333")
 }
@@ -66,8 +66,8 @@ pub fn round_half_even_vs_python_test() -> Nil {
   ]
   list.each(cases, fn(case_) {
     let #(input, expected) = case_
-    let assert Ok(d) = decimal.from_string(input)
-    decimal.round(d, 0, rounding.HalfEven)
+    let assert Ok(d) = decimal.parse(input)
+    support.round(d, 0, decimal.HalfEven)
     |> decimal.to_string
     |> should.equal(expected)
   })
@@ -85,8 +85,8 @@ pub fn round_half_up_vs_python_test() -> Nil {
   ]
   list.each(cases, fn(case_) {
     let #(input, expected) = case_
-    let assert Ok(d) = decimal.from_string(input)
-    decimal.round(d, 0, rounding.HalfUp)
+    let assert Ok(d) = decimal.parse(input)
+    support.round(d, 0, decimal.HalfUp)
     |> decimal.to_string
     |> should.equal(expected)
   })
@@ -106,8 +106,8 @@ pub fn rounding_money_examples_test() -> Nil {
   ]
   list.each(cases, fn(case_) {
     let #(input, expected) = case_
-    let assert Ok(d) = decimal.from_string(input)
-    decimal.round(d, 2, rounding.HalfEven)
+    let assert Ok(d) = decimal.parse(input)
+    support.round(d, 2, decimal.HalfEven)
     |> decimal.to_string
     |> should.equal(expected)
   })
@@ -118,8 +118,8 @@ pub fn rounding_money_examples_test() -> Nil {
 pub fn pmt_vs_excel_30y_fixed_6pct_test() -> Nil {
   // Excel: PMT(0.06/12, 360, -200000) = $1199.10  (rounded to 2 dp).
   // Cross-referenced against numpy_financial.pmt(0.005, 360, -200000).
-  let assert Ok(p) = decimal.from_string("200000")
-  let assert Ok(r) = decimal.from_string("0.005")
+  let assert Ok(p) = decimal.parse("200000")
+  let assert Ok(r) = decimal.parse("0.005")
   let assert Ok(pmt) = interest.payment(p, r, 360, 2)
   decimal.to_string(pmt)
   |> should.equal("1199.10")
@@ -128,8 +128,8 @@ pub fn pmt_vs_excel_30y_fixed_6pct_test() -> Nil {
 pub fn fv_vs_textbook_test() -> Nil {
   // Textbook: $1000 invested at 5% annually for 10 years yields $1628.89.
   // numpy_financial.fv(0.05, 10, 0, -1000) → 1628.894626...
-  let assert Ok(pv) = decimal.from_string("1000")
-  let assert Ok(r) = decimal.from_string("0.05")
+  let assert Ok(pv) = decimal.parse("1000")
+  let assert Ok(r) = decimal.parse("0.05")
   let assert Ok(fv) = interest.future_value(pv, r, 10, 2)
   decimal.to_string(fv)
   |> should.equal("1628.89")
@@ -138,7 +138,7 @@ pub fn fv_vs_textbook_test() -> Nil {
 pub fn ear_vs_investopedia_test() -> Nil {
   // Investopedia EAR example:
   // Nominal 12% APR compounded monthly: EAR = (1+0.01)^12 - 1 = 0.126825.
-  let assert Ok(r) = decimal.from_string("0.12")
+  let assert Ok(r) = decimal.parse("0.12")
   let assert Ok(ear) = interest.effective_annual_rate(r, 12, 6)
   decimal.to_string(ear)
   |> should.equal("0.126825")
@@ -146,9 +146,9 @@ pub fn ear_vs_investopedia_test() -> Nil {
 
 pub fn simple_interest_textbook_test() -> Nil {
   // 1000 × 0.05 × 3 = 150.00.
-  let assert Ok(p) = decimal.from_string("1000")
-  let assert Ok(r) = decimal.from_string("0.05")
-  let assert Ok(i) = interest.simple_interest(p, r, 3, 2)
+  let assert Ok(p) = decimal.parse("1000")
+  let assert Ok(r) = decimal.parse("0.05")
+  let assert Ok(i) = interest.simple(p, r, 3, 2)
   decimal.to_string(i)
   |> should.equal("150.00")
 }

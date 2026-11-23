@@ -33,11 +33,11 @@ import gleeunit/should
 
 import finanza/card
 import finanza/decimal
-import finanza/decimal/rounding
 import finanza/interest
+import support
 
 fn d(s: String) -> decimal.Decimal {
-  let assert Ok(v) = decimal.from_string(s)
+  let assert Ok(v) = decimal.parse(s)
   v
 }
 
@@ -65,21 +65,21 @@ pub fn subtract_vs_python_decimal_test() -> Nil {
 
 pub fn divide_at_6dp_vs_python_test() -> Nil {
   // Python: (Decimal('1') / Decimal('3')).quantize(Decimal('0.000001'), ROUND_HALF_EVEN)
-  let assert Ok(q) = decimal.divide(d("1"), d("3"), 6, rounding.HalfEven)
+  let assert Ok(q) = decimal.divide(d("1"), d("3"), 6, decimal.HalfEven)
   decimal.equal(q, d("0.333333"))
   |> should.be_true
 }
 
 pub fn divide_at_8dp_vs_python_test() -> Nil {
   // Python: (Decimal('10') / Decimal('7')).quantize(0.00000001, HE) = 1.42857143
-  let assert Ok(q) = decimal.divide(d("10"), d("7"), 8, rounding.HalfEven)
+  let assert Ok(q) = decimal.divide(d("10"), d("7"), 8, decimal.HalfEven)
   decimal.equal(q, d("1.42857143"))
   |> should.be_true
 }
 
 pub fn divide_at_10dp_vs_python_test() -> Nil {
   // Python: 22 / 7 quantized to 10 dp = 3.1428571429
-  let assert Ok(q) = decimal.divide(d("22"), d("7"), 10, rounding.HalfEven)
+  let assert Ok(q) = decimal.divide(d("22"), d("7"), 10, decimal.HalfEven)
   decimal.equal(q, d("3.1428571429"))
   |> should.be_true
 }
@@ -88,40 +88,40 @@ pub fn divide_at_10dp_vs_python_test() -> Nil {
 
 pub fn round_half_down_vs_python_test() -> Nil {
   // Python ROUND_HALF_DOWN of 1.235 at 2 dp = 1.23
-  let r = decimal.round(d("1.235"), 2, rounding.HalfDown)
+  let r = support.round(d("1.235"), 2, decimal.HalfDown)
   decimal.to_string(r)
   |> should.equal("1.23")
 }
 
 pub fn round_up_vs_python_test() -> Nil {
   // ROUND_UP rounds away from zero: 1.231 -> 1.24, -1.231 -> -1.24
-  decimal.to_string(decimal.round(d("1.231"), 2, rounding.Up))
+  decimal.to_string(support.round(d("1.231"), 2, decimal.Up))
   |> should.equal("1.24")
-  decimal.to_string(decimal.round(d("-1.231"), 2, rounding.Up))
+  decimal.to_string(support.round(d("-1.231"), 2, decimal.Up))
   |> should.equal("-1.24")
 }
 
 pub fn round_down_vs_python_test() -> Nil {
   // ROUND_DOWN truncates toward zero: 1.239 -> 1.23, -1.239 -> -1.23
-  decimal.to_string(decimal.round(d("1.239"), 2, rounding.Down))
+  decimal.to_string(support.round(d("1.239"), 2, decimal.Down))
   |> should.equal("1.23")
-  decimal.to_string(decimal.round(d("-1.239"), 2, rounding.Down))
+  decimal.to_string(support.round(d("-1.239"), 2, decimal.Down))
   |> should.equal("-1.23")
 }
 
 pub fn round_floor_vs_python_test() -> Nil {
   // ROUND_FLOOR toward -inf: 1.239 -> 1.23, -1.231 -> -1.24
-  decimal.to_string(decimal.round(d("1.239"), 2, rounding.Floor))
+  decimal.to_string(support.round(d("1.239"), 2, decimal.Floor))
   |> should.equal("1.23")
-  decimal.to_string(decimal.round(d("-1.231"), 2, rounding.Floor))
+  decimal.to_string(support.round(d("-1.231"), 2, decimal.Floor))
   |> should.equal("-1.24")
 }
 
 pub fn round_ceiling_vs_python_test() -> Nil {
   // ROUND_CEILING toward +inf: 1.231 -> 1.24, -1.239 -> -1.23
-  decimal.to_string(decimal.round(d("1.231"), 2, rounding.Ceiling))
+  decimal.to_string(support.round(d("1.231"), 2, decimal.Ceiling))
   |> should.equal("1.24")
-  decimal.to_string(decimal.round(d("-1.239"), 2, rounding.Ceiling))
+  decimal.to_string(support.round(d("-1.239"), 2, decimal.Ceiling))
   |> should.equal("-1.23")
 }
 
@@ -130,15 +130,15 @@ pub fn round_half_modes_negative_at_half_test() -> Nil {
   // HE -> -1.24, HU -> -1.24, HD -> -1.23, UP -> -1.24, DN -> -1.23
   // FL -> -1.24, CE -> -1.23
   let v = d("-1.235")
-  decimal.to_string(decimal.round(v, 2, rounding.HalfEven))
+  decimal.to_string(support.round(v, 2, decimal.HalfEven))
   |> should.equal("-1.24")
-  decimal.to_string(decimal.round(v, 2, rounding.HalfUp))
+  decimal.to_string(support.round(v, 2, decimal.HalfUp))
   |> should.equal("-1.24")
-  decimal.to_string(decimal.round(v, 2, rounding.HalfDown))
+  decimal.to_string(support.round(v, 2, decimal.HalfDown))
   |> should.equal("-1.23")
-  decimal.to_string(decimal.round(v, 2, rounding.Floor))
+  decimal.to_string(support.round(v, 2, decimal.Floor))
   |> should.equal("-1.24")
-  decimal.to_string(decimal.round(v, 2, rounding.Ceiling))
+  decimal.to_string(support.round(v, 2, decimal.Ceiling))
   |> should.equal("-1.23")
 }
 
@@ -160,7 +160,7 @@ pub fn pmt_15y_fixed_4pct_test() -> Nil {
   // 15y fixed at 4 %/year, monthly. Principal 200_000, n=180. Rate
   // 0.04/12 at 6 dp = 0.003333.
   let principal = d("200000")
-  let assert Ok(rate) = decimal.divide(d("0.04"), d("12"), 6, rounding.HalfEven)
+  let assert Ok(rate) = decimal.divide(d("0.04"), d("12"), 6, decimal.HalfEven)
   let assert Ok(payment) = interest.payment(principal, rate, 180, 2)
   decimal.to_string(payment)
   |> should.equal("1479.34")
@@ -170,7 +170,7 @@ pub fn pmt_5y_auto_6pct_test() -> Nil {
   // 5y auto loan at 6 %/year monthly. Principal 25_000, n=60. Rate
   // 0.06/12 at 6 dp = 0.005000 (i.e. exact 0.005).
   let principal = d("25000")
-  let assert Ok(rate) = decimal.divide(d("0.06"), d("12"), 6, rounding.HalfEven)
+  let assert Ok(rate) = decimal.divide(d("0.06"), d("12"), 6, decimal.HalfEven)
   let assert Ok(payment) = interest.payment(principal, rate, 60, 2)
   decimal.to_string(payment)
   |> should.equal("483.32")
@@ -182,8 +182,7 @@ pub fn pmt_7y_at_3_5pct_test() -> Nil {
   // finanza with the 7-dp adaptive `pow_loop` lands at 672.00 (1 cent
   // off, half the drift of the previous 6-dp regime which gave 672.01).
   let principal = d("50000")
-  let assert Ok(rate) =
-    decimal.divide(d("0.035"), d("12"), 6, rounding.HalfEven)
+  let assert Ok(rate) = decimal.divide(d("0.035"), d("12"), 6, decimal.HalfEven)
   let assert Ok(payment) = interest.payment(principal, rate, 84, 2)
   decimal.to_string(payment)
   |> should.equal("672.00")
@@ -273,10 +272,10 @@ pub fn amortisation_period_1_small_test() -> Nil {
   decimal.to_string(pmt)
   |> should.equal("88.85")
   // The README example already covers the first row split for this
-  // exact loan via amortization.schedule; here we double-check the
+  // exact loan via interest.schedule; here we double-check the
   // analytic identity.
   let assert Ok(interest_period_1) = decimal.multiply(d("1000"), d("0.01"))
-  decimal.to_string(decimal.round(interest_period_1, 2, rounding.HalfEven))
+  decimal.to_string(support.round(interest_period_1, 2, decimal.HalfEven))
   |> should.equal("10.00")
 }
 

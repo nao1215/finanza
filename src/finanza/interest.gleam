@@ -1,622 +1,463 @@
-//// Time-value-of-money helpers built on
-//// [`finanza/decimal`](./decimal.html).
+//// Time value of money: simple interest, future and present value, loan
+//// payments, effective annual rates and amortization schedules.
 ////
-//// Every function takes its inputs as decimals, computes in decimal,
-//// and rounds the final result with `HalfEven` ("banker's") to the
-//// caller-supplied number of decimal places.
+//// Rates are per period as decimals, so 0.5% a month is `0.005`. Every
+//// function rounds its result half-even to `digits` places.
 ////
-//// ## Precision
-////
-//// Iterative computations (`future_value`, `present_value`,
-//// `payment`, `effective_annual_rate`, `compound_interest`) target
-//// **7 decimal digits** of internal working precision. Before
-//// every multiplication inside the iterative growth-factor loop
-//// the accumulator is rounded adaptively to the largest digit
-//// count for which the resulting product still fits under
-//// 2^53 − 1 (the JavaScript safe-integer ceiling enforced by
-//// [`finanza/decimal`](./decimal.html)). For typical inputs the
-//// target precision is always reached; only when the growth
-//// factor swells (long horizons at very high rates, growth above
-//// ~10⁵) does the per-step precision shed digits to keep the
-//// multiplication safe.
-////
-//// **Honest-precision ceiling.** The iterative loop can deliver at
-//// most ~7 honest decimal digits regardless of the caller's
-//// `digits` argument. After issue #25 (`decimal.round` is
-//// trim-only; the final step is now `decimal.rescale`), the
-//// returned value's exponent matches the requested `-digits`, so
-//// callers asking for `digits > 7` get a Decimal with the right
-//// shape — but the trailing `digits − 7` decimal places are zero
-//// padding from the final rescale, not computed precision. The
-//// numeric value is unchanged by those trailing zeros; the
-//// rendered form is more verbose without being more accurate. If
-//// you need more than 7 honest digits, compute the closed form in
-//// a higher-precision package (Python `decimal` with `prec=50`,
-//// for instance).
-////
-//// Concrete consequence: results match textbook 50-digit references
-//// (Python `decimal`, `numpy_financial`, Excel) to the cent at
-//// `digits = 2` and to ~10⁻⁶ at `digits = 6` for monthly rates and
-//// horizons up to about 30 years. For lending-grade work where the
-//// answer must be reproducible against external industry tooling,
-//// stick to those typical-input ranges or compute the closed form
-//// in a higher-precision package.
+//// Growth over many periods is computed one period at a time. Results
+//// agree with numpy-financial and spreadsheet functions to the cent for
+//// monthly rates over 30 years. `future_value` and `present_value` work
+//// at `digits + 2` places; `payment`, `effective_annual_rate` and
+//// `schedule` work at 7, so a `digits` above 7 pads with zeros there.
 
 import gleam/bool
 import gleam/int
+import gleam/list
 import gleam/order
 import gleam/result
 
-import finanza/decimal
-import finanza/decimal/rounding
+import finanza/decimal.{type Decimal}
 
-/// Errors raised by interest functions.
+/// Why an interest calculation was rejected.
+///
 pub type InterestError {
-  /// `principal` was negative.
+  /// The principal was negative.
   NegativePrincipal
-  /// `rate` was below `-1.0` (i.e. a return of less than `-100%`).
-  /// Returns less than `-100%` have no meaningful interpretation
-  /// in the TVM formulas — the resulting future value would be
-  /// negative for a positive principal. Rates in the range
-  /// `[-1.0, ∞)` are accepted (deflation, depreciation, total-loss
-  /// at exactly `-1.0`).
-  ///
-  /// The legacy `NegativeRate` variant is no longer emitted; it is
-  /// retained so existing pattern matches keep compiling.
+  /// The rate was below -1, a loss of more than 100%.
   RateBelowMinusOne
-  /// **Deprecated alias for `RateBelowMinusOne`**. Retained so
-  /// callers that pattern-matched on the previous "any negative
-  /// rate" reject path keep compiling, but the library never
-  /// returns this variant — it always emits `RateBelowMinusOne`.
-  NegativeRate
-  /// `periods` was zero or negative, or exceeded the supported range
-  /// `1..=1200` (100 years of monthly compounding).
+  /// The number of periods was negative or above 1200 (100 years of
+  /// months). `payment` also rejects 0.
   PeriodsOutOfRange
-  /// `compounds_per_year` was zero or negative.
+  /// The number of compounding periods per year was zero, negative or
+  /// above 1200.
   CompoundsOutOfRange
   /// `digits` was negative.
   NegativeDigits
-  /// Underlying decimal arithmetic produced an error.
-  ArithmeticError(error: decimal.ArithmeticError)
+  /// The decimal arithmetic underneath failed.
+  ArithmeticFailed(decimal.ArithmeticError)
+}
+
+/// One row of an amortization schedule.
+///
+pub type Period {
+  Period(
+    /// The period number, starting at 1.
+    index: Int,
+    /// The total paid in this period.
+    payment: Decimal,
+    /// The part of the payment that is interest.
+    interest: Decimal,
+    /// The part of the payment that reduces the balance.
+    principal_paid: Decimal,
+    /// The balance left after this period.
+    balance: Decimal,
+  )
 }
 
 const max_periods: Int = 1200
 
-/// Target internal working precision for iterative growth-factor
-/// computations. The adaptive `pow_loop` rounds the accumulator
-/// down to fewer digits per step if it would otherwise push the
-/// multiplication above `max_safe_coefficient`. 7 digits is the
-/// highest target that keeps typical-input multiplications safe
-/// while still giving textbook-cent accuracy at `digits = 2`.
 const max_work_digits: Int = 7
 
-/// Internal working precision for the iterative `future_value` /
-/// `present_value` growth and discount loops. Two guard digits beyond
-/// the caller's requested `digits` keep the FV/PV inverse exact at the
-/// requested precision; `max_work_digits` is the floor so low-`digits`
-/// callers still benefit from textbook-cent accuracy. The per-step
-/// adaptive overflow guard in `pow_loop` / `decimal.divide` clamps the
-/// effective precision back down if a very high `digits` would push an
-/// intermediate past `max_safe_coefficient`, so this can be requested
-/// freely without risking a `PrecisionExceeded`.
-fn work_digits_for(digits digits: Int) -> Int {
-  int.max(max_work_digits, digits + 2)
-}
-
-/// Upper bound on a `Decimal` coefficient that `finanza/decimal`
-/// will accept (2^53 − 1, the IEEE-754 double safe-integer ceiling).
-/// Mirrors the value enforced inside `finanza/decimal`; kept here
-/// so `pow_loop` can predict overflow before calling `multiply`.
 const max_safe_coefficient: Int = 9_007_199_254_740_991
 
-// --- Simple interest -----------------------------------------------------
-
-/// Simple interest: `I = P × r × t`.
+/// Returns the simple interest `principal × rate × periods`.
 ///
-/// `periods == 0` is a valid input and returns `0` rescaled to
-/// `digits` — mathematically there is no interest over zero time,
-/// and accepting the trivial case lets callers reuse this function
-/// inside schedule loops without inserting a branch for the
-/// "as-of period 0" row. Negative `periods` is still rejected
-/// with `PeriodsOutOfRange`.
-pub fn simple_interest(
-  principal principal: decimal.Decimal,
-  rate rate: decimal.Decimal,
-  periods periods: Int,
-  digits digits: Int,
-) -> Result(decimal.Decimal, InterestError) {
-  use _ <- result.try(check_principal(principal))
-  use _ <- result.try(check_rate(rate))
-  use _ <- result.try(check_periods_non_negative(periods))
-  use _ <- result.try(check_digits(digits))
-  case periods {
-    0 -> rescale_to_digits(decimal.zero(), digits)
-    _ -> {
-      use pr <- result.try(
-        decimal.multiply(principal, rate) |> result.map_error(ArithmeticError),
-      )
-      use product <- result.try(
-        decimal.multiply(pr, decimal.from_int(n: periods))
-        |> result.map_error(ArithmeticError),
-      )
-      rescale_to_digits(product, digits)
-    }
-  }
-}
-
-// --- Compound interest ---------------------------------------------------
-
-/// Future value under compound interest:
+/// ## Examples
 ///
-/// ```text
-/// FV = principal × (1 + annual_rate / compounds_per_year)^(compounds_per_year × years)
+/// ```gleam
+/// let assert Ok(principal) = decimal.parse("1000")
+/// let assert Ok(rate) = decimal.parse("0.05")
+/// interest.simple(principal:, rate:, periods: 3, digits: 2)
+/// |> result.map(decimal.to_string)
+/// // -> Ok("150.00")
 /// ```
 ///
-/// `years == 0` is a valid input and returns `principal` rescaled to
-/// `digits` — the formula reduces to `principal × 1` when the exponent
-/// is zero, and accepting the trivial case lets callers reuse this
-/// function inside schedule loops without inserting a branch for the
-/// "as-of year 0" row. Aligns with the zero-periods handling in
-/// `future_value`, `present_value`, `payment`, and `simple_interest`.
-pub fn compound_interest(
-  principal principal: decimal.Decimal,
-  annual_rate annual_rate: decimal.Decimal,
-  years years: Int,
-  compounds_per_year compounds_per_year: Int,
-  digits digits: Int,
-) -> Result(decimal.Decimal, InterestError) {
-  use _ <- result.try(check_principal(principal))
-  use _ <- result.try(check_rate(annual_rate))
-  use _ <- result.try(check_periods_non_negative(years))
-  use _ <- result.try(check_compounds(compounds_per_year))
-  use _ <- result.try(check_digits(digits))
-  use <- bool.guard(
-    when: years == 0,
-    return: rescale_to_digits(principal, digits),
-  )
-  let total_periods = years * compounds_per_year
-  use _ <- result.try(check_periods(total_periods))
-  let work_digits = max_work_digits
-  use rate_per_period <- result.try(
-    decimal.divide(
-      a: annual_rate,
-      b: decimal.from_int(n: compounds_per_year),
-      digits: work_digits,
-      mode: rounding.HalfEven,
-    )
-    |> result.map_error(ArithmeticError),
-  )
-  use growth <- result.try(growth_factor(
-    rate: rate_per_period,
-    periods: total_periods,
-    digits: work_digits,
-  ))
-  use product <- result.try(
-    decimal.multiply(principal, growth) |> result.map_error(ArithmeticError),
-  )
-  rescale_to_digits(product, digits)
-}
-
-// --- FV / PV / PMT / EAR -------------------------------------------------
-
-/// Future value of `present` after `periods` periods at `rate_per_period`.
-///
-/// Grows `present` by the base `(1 + rate_per_period)` one period at a
-/// time at an internal working precision of `digits + 2` (floored at the
-/// module's working-digit target). The `present_value` inverse runs the
-/// same iteration in reverse, so `future_value(present_value(x)) == x`
-/// round-trips to the requested `digits` within rounding tolerance. See
-/// the module-level **Precision** section for the adaptive overflow guard.
-pub fn future_value(
-  present present: decimal.Decimal,
-  rate_per_period rate_per_period: decimal.Decimal,
+pub fn simple(
+  principal principal: Decimal,
+  rate rate: Decimal,
   periods periods: Int,
   digits digits: Int,
-) -> Result(decimal.Decimal, InterestError) {
-  use _ <- result.try(check_rate(rate_per_period))
-  use _ <- result.try(check_periods_non_negative(periods))
+) -> Result(Decimal, InterestError) {
+  use _ <- result.try(check_principal(principal))
+  use _ <- result.try(check_rate(rate))
+  use _ <- result.try(check_periods(periods, minimum: 0))
   use _ <- result.try(check_digits(digits))
-  use <- bool.guard(
-    when: periods == 0,
-    return: rescale_to_digits(present, digits),
-  )
-  let work_digits = work_digits_for(digits: digits)
-  // Issue #76 (re-verification of #26): the previous implementation
-  // pre-computed `growth = (1 + r)^periods` and did a single
-  // `present × growth` multiply. At `digits >= 6` that multiply
-  // overflowed `max_safe_coefficient` whenever `present` already carried
-  // high precision (e.g. the output of `present_value` at the same
-  // `digits`), and guarding it by rounding `present` down shed so much
-  // precision that the FV/PV inverse no longer held. Instead, grow
-  // `present` by the *base* `(1 + r)` one period at a time via the same
-  // adaptive `pow_loop` the growth factor uses: the base has a small
-  // coefficient, so each step stays well inside the safe range and the
-  // running value never accumulates the giant `growth` coefficient.
-  // This keeps the inverse property exact in both directions.
-  use base <- result.try(
-    decimal.add(decimal.one(), rate_per_period)
-    |> result.map_error(ArithmeticError),
-  )
+  use periods <- result.try(int_to_decimal(periods))
+  decimal.multiply(principal, rate)
+  |> result.try(decimal.multiply(_, periods))
+  |> result.map_error(ArithmeticFailed)
+  |> result.try(round_to(_, digits))
+}
+
+/// Returns `present × (1 + rate_per_period)^periods`.
+///
+/// For a nominal annual rate compounded `n` times a year, pass the
+/// annual rate divided by `n` and the number of years times `n`.
+///
+/// ## Examples
+///
+/// ```gleam
+/// let assert Ok(present) = decimal.parse("1000")
+/// let assert Ok(rate) = decimal.parse("0.05")
+/// interest.future_value(present:, rate_per_period: rate, periods: 10, digits: 2)
+/// |> result.map(decimal.to_string)
+/// // -> Ok("1628.89")
+/// ```
+///
+pub fn future_value(
+  present present: Decimal,
+  rate_per_period rate: Decimal,
+  periods periods: Int,
+  digits digits: Int,
+) -> Result(Decimal, InterestError) {
+  use _ <- result.try(check_rate(rate))
+  use _ <- result.try(check_periods(periods, minimum: 0))
+  use _ <- result.try(check_digits(digits))
+  use base <- result.try(one_plus(rate))
   use grown <- result.try(pow_loop(
     base: base,
     exponent: periods,
-    acc: present,
-    digits: work_digits,
+    accumulator: present,
+    digits: int.max(max_work_digits, digits + 2),
   ))
-  rescale_to_digits(grown, digits)
+  round_to(grown, digits)
 }
 
-/// Present value of `future` discounted at `rate_per_period` for
-/// `periods` periods.
+/// Returns `future ÷ (1 + rate_per_period)^periods`, the inverse of
+/// `future_value`.
 ///
-/// Discounts `future` by the base `(1 + rate_per_period)` one period at a
-/// time at an internal working precision of `digits + 2` (floored at the
-/// module's working-digit target) — the exact inverse of `future_value`,
-/// so the FV/PV round-trip holds to the requested `digits` within rounding
-/// tolerance. See the module-level **Precision** section for the adaptive
-/// overflow guard.
 pub fn present_value(
-  future future: decimal.Decimal,
-  rate_per_period rate_per_period: decimal.Decimal,
+  future future: Decimal,
+  rate_per_period rate: Decimal,
   periods periods: Int,
   digits digits: Int,
-) -> Result(decimal.Decimal, InterestError) {
-  use _ <- result.try(check_rate(rate_per_period))
-  use _ <- result.try(check_periods_non_negative(periods))
+) -> Result(Decimal, InterestError) {
+  use _ <- result.try(check_rate(rate))
+  use _ <- result.try(check_periods(periods, minimum: 0))
   use _ <- result.try(check_digits(digits))
-  use <- bool.guard(
-    when: periods == 0,
-    return: rescale_to_digits(future, digits),
-  )
-  let work_digits = work_digits_for(digits: digits)
-  // Issue #76 (re-verification of #26): discount `future` by the *base*
-  // `(1 + r)` one period at a time, the exact inverse of the iterative
-  // multiply `future_value` now uses. Dividing repeatedly by the small
-  // base keeps every intermediate within the safe coefficient range
-  // (unlike multiplying `future` by a high-precision `1 / growth`, which
-  // overflowed once `future` carried the precision of a prior
-  // `future_value` call), and makes PV and FV true numerical inverses so
-  // `future_value(present_value(x)) == x` round-trips to the requested
-  // `digits` in both directions.
-  use base <- result.try(
-    decimal.add(decimal.one(), rate_per_period)
-    |> result.map_error(ArithmeticError),
-  )
+  use base <- result.try(one_plus(rate))
   use discounted <- result.try(discount_loop(
     base: base,
     exponent: periods,
-    acc: future,
-    digits: work_digits,
+    accumulator: future,
+    digits: int.max(max_work_digits, digits + 2),
   ))
-  rescale_to_digits(discounted, digits)
+  round_to(discounted, digits)
 }
 
-/// Periodic payment for a fully-amortising loan:
+/// Returns the payment per period that repays `principal` over
+/// `periods` periods: `principal × rate / (1 - (1 + rate)^-periods)`,
+/// or `principal / periods` when the rate is zero.
 ///
-/// ```text
-/// PMT = principal × rate / (1 - (1 + rate)^(-periods))
+/// ## Examples
+///
+/// ```gleam
+/// let assert Ok(principal) = decimal.parse("200000")
+/// let assert Ok(rate) = decimal.parse("0.005")
+/// interest.payment(principal:, rate_per_period: rate, periods: 360, digits: 2)
+/// |> result.map(decimal.to_string)
+/// // -> Ok("1199.10")
 /// ```
 ///
-/// When `rate_per_period` is zero, returns straight-line
-/// `principal / periods`.
-///
-/// See the module-level **Precision** section for the
-/// 7-working-digit target and the adaptive overflow guard.
 pub fn payment(
-  principal principal: decimal.Decimal,
-  rate_per_period rate_per_period: decimal.Decimal,
+  principal principal: Decimal,
+  rate_per_period rate: Decimal,
   periods periods: Int,
   digits digits: Int,
-) -> Result(decimal.Decimal, InterestError) {
+) -> Result(Decimal, InterestError) {
   use _ <- result.try(check_principal(principal))
-  use _ <- result.try(check_rate(rate_per_period))
-  use _ <- result.try(check_periods(periods))
+  use _ <- result.try(check_rate(rate))
+  use _ <- result.try(check_periods(periods, minimum: 1))
   use _ <- result.try(check_digits(digits))
-  use <- bool.guard(
-    when: decimal.is_zero(rate_per_period),
-    return: straight_line_payment(
-      principal: principal,
-      periods: periods,
+  use <- bool.guard(when: decimal.is_zero(rate), return: {
+    use periods <- result.try(int_to_decimal(periods))
+    decimal.divide(
+      principal,
+      periods,
       digits: digits,
-    ),
-  )
-  amortising_payment(
-    principal: principal,
-    rate: rate_per_period,
-    periods: periods,
-    digits: digits,
-  )
-}
-
-fn straight_line_payment(
-  principal principal: decimal.Decimal,
-  periods periods: Int,
-  digits digits: Int,
-) -> Result(decimal.Decimal, InterestError) {
-  decimal.divide(
-    a: principal,
-    b: decimal.from_int(n: periods),
-    digits: digits,
-    mode: rounding.HalfEven,
-  )
-  |> result.map_error(ArithmeticError)
-}
-
-fn amortising_payment(
-  principal principal: decimal.Decimal,
-  rate rate: decimal.Decimal,
-  periods periods: Int,
-  digits digits: Int,
-) -> Result(decimal.Decimal, InterestError) {
-  let work_digits = max_work_digits
-  use growth <- result.try(growth_factor(
-    rate: rate,
-    periods: periods,
-    digits: work_digits,
-  ))
-  use inv_growth <- result.try(
-    decimal.divide(
-      a: decimal.one(),
-      b: growth,
-      digits: work_digits,
-      mode: rounding.HalfEven,
+      rounding: decimal.HalfEven,
     )
-    |> result.map_error(ArithmeticError),
-  )
-  use denominator <- result.try(
-    decimal.subtract(decimal.one(), inv_growth)
-    |> result.map_error(ArithmeticError),
-  )
-  use numerator <- result.try(
-    decimal.multiply(principal, rate) |> result.map_error(ArithmeticError),
-  )
-  // Issue #27: `decimal.divide` scales the numerator up by
-  // `digits + (numerator.exp - denominator.exp)` before integer
-  // division. With `numerator` at exp -2 and `denominator` at exp
-  // `-work_digits` (-7), every extra user-requested digit beyond
-  // ~7 pushes the scaled numerator past `max_safe_coefficient`
-  // (the boundary is `digits = 8` for the canonical 1000/5%/10
-  // amortising loan from the issue). Cap the divide at
-  // `work_digits` and rescale up to the user's `digits` afterward
-  // — the precision contract (module-level "Precision" section)
-  // already documents the 7-working-digit ceiling, so the rescale
-  // is just zero-padding past that point. Capping is preferable
-  // to losing precision via the safe-multiply guard because the
-  // amortising payment is a one-shot computation, not an
-  // iterative one.
-  let internal_digits = case digits > max_work_digits {
-    True -> max_work_digits
-    False -> digits
+    |> result.map_error(ArithmeticFailed)
+  })
+  use growth <- result.try(growth_factor(rate, periods))
+  let quotient = {
+    use inverse <- result.try(decimal.divide(
+      decimal.one(),
+      growth,
+      digits: max_work_digits,
+      rounding: decimal.HalfEven,
+    ))
+    use denominator <- result.try(decimal.subtract(decimal.one(), inverse))
+    use numerator <- result.try(decimal.multiply(principal, rate))
+    // Dividing at more than the working precision would overflow for
+    // ordinary loans and add no accuracy, so pad afterwards instead.
+    decimal.divide(
+      numerator,
+      denominator,
+      digits: int.min(digits, max_work_digits),
+      rounding: decimal.HalfEven,
+    )
   }
-  use raw <- result.try(
-    decimal.divide(
-      a: numerator,
-      b: denominator,
-      digits: internal_digits,
-      mode: rounding.HalfEven,
-    )
-    |> result.map_error(ArithmeticError),
-  )
-  rescale_to_digits(raw, digits)
+  quotient
+  |> result.map_error(ArithmeticFailed)
+  |> result.try(round_to(_, digits))
 }
 
-/// Effective annual rate from a nominal rate compounded
-/// `compounds_per_year` times per year:
+/// Returns the effective annual rate of a nominal rate compounded
+/// `compounds_per_year` times a year:
+/// `(1 + nominal_rate / compounds_per_year)^compounds_per_year - 1`.
 ///
-/// ```text
-/// EAR = (1 + nominal_rate / compounds_per_year)^compounds_per_year - 1
-/// ```
-///
-/// See the module-level **Precision** section for the
-/// 7-working-digit target and the adaptive overflow guard.
 pub fn effective_annual_rate(
-  nominal_rate nominal_rate: decimal.Decimal,
+  nominal_rate nominal_rate: Decimal,
   compounds_per_year compounds_per_year: Int,
   digits digits: Int,
-) -> Result(decimal.Decimal, InterestError) {
+) -> Result(Decimal, InterestError) {
   use _ <- result.try(check_rate(nominal_rate))
-  use _ <- result.try(check_compounds(compounds_per_year))
+  use <- bool.guard(
+    when: compounds_per_year <= 0 || compounds_per_year > max_periods,
+    return: Error(CompoundsOutOfRange),
+  )
   use _ <- result.try(check_digits(digits))
-  let work_digits = max_work_digits
-  use rate_per_period <- result.try(
+  use compounds <- result.try(int_to_decimal(compounds_per_year))
+  use rate <- result.try(
     decimal.divide(
-      a: nominal_rate,
-      b: decimal.from_int(n: compounds_per_year),
-      digits: work_digits,
-      mode: rounding.HalfEven,
+      nominal_rate,
+      compounds,
+      digits: max_work_digits,
+      rounding: decimal.HalfEven,
     )
-    |> result.map_error(ArithmeticError),
+    |> result.map_error(ArithmeticFailed),
   )
-  use growth <- result.try(growth_factor(
-    rate: rate_per_period,
-    periods: compounds_per_year,
-    digits: work_digits,
-  ))
-  use ear_raw <- result.try(
-    decimal.subtract(growth, decimal.one())
-    |> result.map_error(ArithmeticError),
-  )
-  rescale_to_digits(ear_raw, digits)
+  use growth <- result.try(growth_factor(rate, compounds_per_year))
+  decimal.subtract(growth, decimal.one())
+  |> result.map_error(ArithmeticFailed)
+  |> result.try(round_to(_, digits))
 }
 
-// --- Internals -----------------------------------------------------------
-
-/// `(1 + rate)^periods`, computed by repeated multiplication and
-/// rounded to `digits` decimal places between steps so the
-/// coefficient cannot grow unboundedly.
-fn growth_factor(
-  rate rate: decimal.Decimal,
+/// Returns the amortization schedule of a loan repaid with `payment`
+/// each period, or an empty list for 0 periods. Each period's interest is the balance times the rate,
+/// rounded half-even to `digits` places. The last period pays off what
+/// is left, so the final balance is exactly zero.
+///
+/// ## Examples
+///
+/// ```gleam
+/// let assert Ok(principal) = decimal.parse("1000")
+/// let assert Ok(rate) = decimal.parse("0.01")
+/// let assert Ok([first, ..]) =
+///   interest.schedule(principal:, rate_per_period: rate, periods: 12, digits: 2)
+/// #(decimal.to_string(first.interest), decimal.to_string(first.principal_paid))
+/// // -> #("10.00", "78.85")
+/// ```
+///
+pub fn schedule(
+  principal principal: Decimal,
+  rate_per_period rate: Decimal,
   periods periods: Int,
   digits digits: Int,
-) -> Result(decimal.Decimal, InterestError) {
-  use base <- result.try(
-    decimal.add(decimal.one(), rate) |> result.map_error(ArithmeticError),
+) -> Result(List(Period), InterestError) {
+  use _ <- result.try(check_principal(principal))
+  use _ <- result.try(check_rate(rate))
+  use _ <- result.try(check_digits(digits))
+  use <- bool.guard(when: periods == 0, return: Ok([]))
+  use amount <- result.try(payment(
+    principal: principal,
+    rate_per_period: rate,
+    periods: periods,
+    digits: digits,
+  ))
+  schedule_loop(
+    payment: amount,
+    rate: rate,
+    periods: periods,
+    digits: digits,
+    index: 1,
+    balance: principal,
+    rows: [],
   )
-  pow_loop(base: base, exponent: periods, acc: decimal.one(), digits: digits)
+  |> result.map_error(ArithmeticFailed)
 }
 
+fn schedule_loop(
+  payment payment: Decimal,
+  rate rate: Decimal,
+  periods periods: Int,
+  digits digits: Int,
+  index index: Int,
+  balance balance: Decimal,
+  rows rows: List(Period),
+) -> Result(List(Period), decimal.ArithmeticError) {
+  use <- bool.guard(when: index > periods, return: Ok(list.reverse(rows)))
+  use interest <- result.try(
+    decimal.multiply(balance, rate)
+    |> result.try(decimal.round(_, digits: digits, rounding: decimal.HalfEven)),
+  )
+  use row <- result.try(case index == periods {
+    // The last row clears whatever rounding has left on the balance.
+    True -> {
+      use payment <- result.try(decimal.add(interest, balance))
+      use principal_paid <- result.try(decimal.subtract(payment, interest))
+      use balance <- result.map(decimal.round(
+        decimal.zero(),
+        digits: digits,
+        rounding: decimal.HalfEven,
+      ))
+      Period(index:, payment:, interest:, principal_paid:, balance:)
+    }
+    False -> {
+      use principal_paid <- result.try(decimal.subtract(payment, interest))
+      use balance <- result.map(decimal.subtract(balance, principal_paid))
+      Period(index:, payment:, interest:, principal_paid:, balance:)
+    }
+  })
+  schedule_loop(
+    payment: payment,
+    rate: rate,
+    periods: periods,
+    digits: digits,
+    index: index + 1,
+    balance: row.balance,
+    rows: [row, ..rows],
+  )
+}
+
+// Internals ------------------------------------------------------------------
+
+fn growth_factor(
+  rate: Decimal,
+  periods: Int,
+) -> Result(Decimal, InterestError) {
+  use base <- result.try(one_plus(rate))
+  pow_loop(
+    base: base,
+    exponent: periods,
+    accumulator: decimal.one(),
+    digits: max_work_digits,
+  )
+}
+
+fn one_plus(rate: Decimal) -> Result(Decimal, InterestError) {
+  decimal.add(decimal.one(), rate) |> result.map_error(ArithmeticFailed)
+}
+
+// accumulator × base^exponent, one multiplication at a time, rounding
+// between steps so the coefficient stays in range.
 fn pow_loop(
-  base base: decimal.Decimal,
+  base base: Decimal,
   exponent exponent: Int,
-  acc acc: decimal.Decimal,
+  accumulator accumulator: Decimal,
   digits digits: Int,
-) -> Result(decimal.Decimal, InterestError) {
-  use <- bool.guard(when: exponent <= 0, return: Ok(acc))
-  // Round the accumulator adaptively so that `acc × base` cannot
-  // overflow `max_safe_coefficient`. For typical financial inputs
-  // this is a no-op at the `digits` target; high-growth scenarios
-  // shed precision per step rather than failing outright.
-  let acc_safe = round_for_safe_multiply(a: acc, b: base, max_digits: digits)
+) -> Result(Decimal, InterestError) {
+  use <- bool.guard(when: exponent <= 0, return: Ok(accumulator))
+  // Give up places in the accumulator when the product would otherwise
+  // overflow. Fast growth loses precision instead of failing.
+  let safe = round_for_multiply(accumulator, base, digits)
   use product <- result.try(
-    decimal.multiply(acc_safe, base) |> result.map_error(ArithmeticError),
+    decimal.multiply(safe, base) |> result.map_error(ArithmeticFailed),
   )
-  let trimmed =
-    decimal.round(d: product, digits: digits, mode: rounding.HalfEven)
-  pow_loop(base: base, exponent: exponent - 1, acc: trimmed, digits: digits)
+  pow_loop(
+    base: base,
+    exponent: exponent - 1,
+    accumulator: round_or_keep(product, digits),
+    digits: digits,
+  )
 }
 
-/// `acc ÷ base^exponent`, computed by repeated division and rounded to
-/// `digits` decimal places between steps. The exact inverse of
-/// [`pow_loop`](#pow_loop): dividing by the small `base` one period at a
-/// time keeps every intermediate inside the safe coefficient range and
-/// makes `present_value` the numerical inverse of `future_value`.
+// accumulator ÷ base^exponent, the inverse of pow_loop.
 fn discount_loop(
-  base base: decimal.Decimal,
+  base base: Decimal,
   exponent exponent: Int,
-  acc acc: decimal.Decimal,
+  accumulator accumulator: Decimal,
   digits digits: Int,
-) -> Result(decimal.Decimal, InterestError) {
-  use <- bool.guard(when: exponent <= 0, return: Ok(acc))
-  use quotient <- result.try(safe_divide(a: acc, b: base, digits: digits))
+) -> Result(Decimal, InterestError) {
+  use <- bool.guard(when: exponent <= 0, return: Ok(accumulator))
+  use quotient <- result.try(divide_at_most(accumulator, base, digits))
   discount_loop(
     base: base,
     exponent: exponent - 1,
-    acc: quotient,
+    accumulator: quotient,
     digits: digits,
   )
 }
 
-/// `a / b` at the highest precision `<= digits` that does not overflow
-/// `max_safe_coefficient`. `decimal.divide` scales the dividend up by
-/// `10^digits` before integer division, so a high `digits` against a
-/// large dividend can exceed the safe range; rather than fail, step the
-/// precision down until the division fits. This mirrors the adaptive
-/// precision-shedding `pow_loop` already does on the multiply side, so
-/// the iterative discount stays total instead of surfacing
-/// `PrecisionExceeded` at extreme `digits`.
-fn safe_divide(
-  a a: decimal.Decimal,
-  b b: decimal.Decimal,
-  digits digits: Int,
-) -> Result(decimal.Decimal, InterestError) {
-  case decimal.divide(a: a, b: b, digits: digits, mode: rounding.HalfEven) {
+// Divides at the most places up to `digits` that do not overflow.
+fn divide_at_most(
+  a: Decimal,
+  b: Decimal,
+  digits: Int,
+) -> Result(Decimal, InterestError) {
+  case decimal.divide(a, b, digits: digits, rounding: decimal.HalfEven) {
     Ok(quotient) -> Ok(quotient)
-    Error(err) ->
+    Error(error) ->
       case digits > 0 {
-        True -> safe_divide(a: a, b: b, digits: digits - 1)
-        False -> Error(ArithmeticError(err))
+        True -> divide_at_most(a, b, digits - 1)
+        False -> Error(ArithmeticFailed(error))
       }
   }
 }
 
-/// Round `a` to the largest `d ≤ max_digits` such that
-/// `|a_rounded.coefficient| × |b.coefficient|` fits inside
-/// `max_safe_coefficient`. Falls back to the input value if even
-/// `d = 0` would still overflow (in that case the subsequent
-/// `decimal.multiply` will surface a `PrecisionExceeded` error,
-/// which is the right outcome — the caller's inputs are outside
-/// the supported range).
-fn round_for_safe_multiply(
-  a a: decimal.Decimal,
-  b b: decimal.Decimal,
-  max_digits max_digits: Int,
-) -> decimal.Decimal {
-  let b_coef = int.absolute_value(decimal.coefficient(d: b))
-  case b_coef {
-    0 -> a
-    _ -> do_round_for_safe(a: a, b_coef: b_coef, digits: max_digits)
-  }
-}
-
-fn do_round_for_safe(
-  a a: decimal.Decimal,
-  b_coef b_coef: Int,
-  digits digits: Int,
-) -> decimal.Decimal {
-  use <- bool.guard(when: digits < 0, return: a)
-  let candidate = decimal.round(d: a, digits: digits, mode: rounding.HalfEven)
-  let candidate_coef = int.absolute_value(decimal.coefficient(d: candidate))
-  case candidate_coef * b_coef <= max_safe_coefficient {
+// Rounds `a` to the most places up to `digits` at which a × b stays in
+// range. Returns `a` unchanged when no number of places is enough; the
+// multiplication then reports the overflow.
+fn round_for_multiply(a: Decimal, b: Decimal, digits: Int) -> Decimal {
+  let b_magnitude = int.absolute_value(decimal.coefficient(b))
+  use <- bool.guard(when: digits < 0 || b_magnitude == 0, return: a)
+  let candidate = round_or_keep(a, digits)
+  case
+    int.absolute_value(decimal.coefficient(candidate)) * b_magnitude
+    <= max_safe_coefficient
+  {
     True -> candidate
-    False -> do_round_for_safe(a: a, b_coef: b_coef, digits: digits - 1)
+    False -> round_for_multiply(a, b, digits - 1)
   }
 }
 
-fn check_principal(p: decimal.Decimal) -> Result(Nil, InterestError) {
+// Rounding to fewer places cannot overflow; padding to more places can,
+// and then the value is kept as it is.
+fn round_or_keep(value: Decimal, digits: Int) -> Decimal {
+  case decimal.round(value, digits: digits, rounding: decimal.HalfEven) {
+    Ok(rounded) -> rounded
+    Error(decimal.PrecisionExceeded) | Error(decimal.DivisionByZero) -> value
+  }
+}
+
+fn round_to(value: Decimal, digits: Int) -> Result(Decimal, InterestError) {
+  decimal.round(value, digits: digits, rounding: decimal.HalfEven)
+  |> result.map_error(ArithmeticFailed)
+}
+
+fn int_to_decimal(value: Int) -> Result(Decimal, InterestError) {
+  decimal.from_int(value)
+  |> result.replace_error(ArithmeticFailed(decimal.PrecisionExceeded))
+}
+
+fn check_principal(principal: Decimal) -> Result(Nil, InterestError) {
   use <- bool.guard(
-    when: decimal.is_negative(p),
+    when: decimal.is_negative(principal),
     return: Error(NegativePrincipal),
   )
   Ok(Nil)
 }
 
-fn check_rate(r: decimal.Decimal) -> Result(Nil, InterestError) {
-  use <- bool.guard(
-    when: rate_below_minus_one(r),
-    return: Error(RateBelowMinusOne),
-  )
-  Ok(Nil)
+fn check_rate(rate: Decimal) -> Result(Nil, InterestError) {
+  case decimal.compare(rate, decimal.negate(decimal.one())) {
+    order.Lt -> Error(RateBelowMinusOne)
+    order.Eq | order.Gt -> Ok(Nil)
+  }
 }
 
-/// `True` when `r < -1.0`. The TVM formulas accept `r >= -1.0`
-/// (deflation, depreciation, total loss at exactly `-1.0`) but
-/// reject rates that would make `1 + r < 0`, since the growth
-/// factor `(1 + r)^n` for non-integer or fractional applications
-/// has no real-valued interpretation in that regime.
-fn rate_below_minus_one(r: decimal.Decimal) -> Bool {
-  let minus_one = decimal.negate(decimal.one())
-  decimal.compare(r, minus_one) == order.Lt
-}
-
-fn check_periods(p: Int) -> Result(Nil, InterestError) {
+fn check_periods(
+  periods: Int,
+  minimum minimum: Int,
+) -> Result(Nil, InterestError) {
   use <- bool.guard(
-    when: p <= 0 || p > max_periods,
+    when: periods < minimum || periods > max_periods,
     return: Error(PeriodsOutOfRange),
   )
   Ok(Nil)
 }
 
-/// Like `check_periods` but accepts `0` (used by `simple_interest`,
-/// where zero periods is a valid input that short-circuits to a
-/// rescaled zero result). Negative periods and overlong runs are
-/// still rejected with `PeriodsOutOfRange`.
-fn check_periods_non_negative(p: Int) -> Result(Nil, InterestError) {
-  use <- bool.guard(
-    when: p < 0 || p > max_periods,
-    return: Error(PeriodsOutOfRange),
-  )
+fn check_digits(digits: Int) -> Result(Nil, InterestError) {
+  use <- bool.guard(when: digits < 0, return: Error(NegativeDigits))
   Ok(Nil)
-}
-
-fn check_compounds(n: Int) -> Result(Nil, InterestError) {
-  use <- bool.guard(when: n <= 0, return: Error(CompoundsOutOfRange))
-  Ok(Nil)
-}
-
-fn check_digits(d: Int) -> Result(Nil, InterestError) {
-  use <- bool.guard(when: d < 0, return: Error(NegativeDigits))
-  Ok(Nil)
-}
-
-/// Force `d` to exponent `-digits`, padding with zero or rounding
-/// half-even as needed, so the rendered form always carries exactly
-/// `digits` decimal places (issue #25 — `decimal.round` is trim-only
-/// and cannot pad, so calling it as the final step lets results like
-/// `2000` slip through when the caller asked for `digits: 2`).
-fn rescale_to_digits(
-  d: decimal.Decimal,
-  digits: Int,
-) -> Result(decimal.Decimal, InterestError) {
-  decimal.rescale(d: d, target_exponent: -digits, mode: rounding.HalfEven)
-  |> result.map_error(ArithmeticError)
 }

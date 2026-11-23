@@ -6,7 +6,7 @@
 //// normalize/validate equivalence, etc.). This round attacks the
 //// *algebraic* surface — commutativity, associativity, distributivity,
 //// identities — across the full Decimal operator set, plus the
-//// arbitrary-ratio sum-preservation property of `currency.allocate`
+//// arbitrary-ratio sum-preservation property of `money.allocate`
 //// (round 3 only checked equal ratios), plus the strong amortisation
 //// invariants the docstring promises ("closes the final balance to
 //// zero exactly"), plus parse_expiry / brand-detection / mask edges.
@@ -22,17 +22,15 @@ import gleam/string
 import gleeunit/should
 
 import finanza/card
-import finanza/currency
-import finanza/currency/catalog
 import finanza/decimal
-import finanza/decimal/rounding
 import finanza/interest
-import finanza/interest/amortization
+import finanza/money
+import support
 
 // --- Local helpers -------------------------------------------------------
 
 fn d(s: String) -> decimal.Decimal {
-  let assert Ok(v) = decimal.from_string(s)
+  let assert Ok(v) = decimal.parse(s)
   v
 }
 
@@ -306,8 +304,8 @@ pub fn truncate_idempotent_test() -> Nil {
   ]
   list.each(cases, fn(v) {
     list.each([0, 1, 2, 3], fn(digits) {
-      let once = decimal.truncate(v, digits)
-      let twice = decimal.truncate(once, digits)
+      let once = support.round(v, digits: digits, rounding: decimal.Down)
+      let twice = support.round(once, digits: digits, rounding: decimal.Down)
       decimal.equal(once, twice)
       |> should.be_true
     })
@@ -318,7 +316,7 @@ pub fn truncate_positive_le_input_test() -> Nil {
   let cases = [d("123.456"), d("0.999"), d("0.1"), d("999.999")]
   list.each(cases, fn(v) {
     list.each([0, 1, 2], fn(digits) {
-      let t = decimal.truncate(v, digits)
+      let t = support.round(v, digits: digits, rounding: decimal.Down)
       case decimal.compare(t, v) {
         order.Lt -> Nil
         order.Eq -> Nil
@@ -334,7 +332,7 @@ pub fn truncate_negative_ge_input_test() -> Nil {
   let cases = [d("-123.456"), d("-0.999"), d("-0.1"), d("-999.999")]
   list.each(cases, fn(v) {
     list.each([0, 1, 2], fn(digits) {
-      let t = decimal.truncate(v, digits)
+      let t = support.round(v, digits: digits, rounding: decimal.Down)
       case decimal.compare(t, v) {
         order.Gt -> Nil
         order.Eq -> Nil
@@ -354,7 +352,7 @@ pub fn round_digits_zero_pattern_test() -> Nil {
   ]
   list.each(cases, fn(c) {
     let #(input, expected) = c
-    let rounded = decimal.round(input, 0, rounding.HalfUp)
+    let rounded = support.round(input, 0, decimal.HalfUp)
     decimal.to_string(rounded)
     |> should.equal(expected)
   })
@@ -365,13 +363,13 @@ pub fn round_digits_zero_pattern_test() -> Nil {
 fn allocate_to_units(
   units: Int,
   ratios: List(Int),
-  curr: currency.Currency,
+  curr: money.Currency,
 ) -> Int {
-  let m = currency.from_minor(units, curr)
-  let assert Ok(parts) = currency.allocate(m, ratios)
+  let m = support.from_minor(units, curr)
+  let assert Ok(parts) = money.allocate(m, ratios)
   parts
   |> list.map(fn(p) {
-    let assert Ok(u) = currency.to_minor(p, rounding.HalfEven)
+    let assert Ok(u) = money.to_minor(p, decimal.HalfEven)
     u
   })
   |> list.fold(0, int.add)
@@ -394,7 +392,7 @@ pub fn allocate_sum_preserved_arbitrary_ratios_test() -> Nil {
   ]
   list.each(totals, fn(units) {
     list.each(ratio_sets, fn(ratios) {
-      allocate_to_units(units, ratios, catalog.usd())
+      allocate_to_units(units, ratios, money.usd)
       |> should.equal(units)
     })
   })
@@ -405,7 +403,7 @@ pub fn allocate_sum_preserved_negative_test() -> Nil {
   let ratio_sets = [[1, 1, 1], [3, 2, 1], [7, 11, 13], [1, 99]]
   list.each(totals, fn(units) {
     list.each(ratio_sets, fn(ratios) {
-      allocate_to_units(units, ratios, catalog.usd())
+      allocate_to_units(units, ratios, money.usd)
       |> should.equal(units)
     })
   })
@@ -417,7 +415,7 @@ pub fn allocate_sum_preserved_jpy_test() -> Nil {
   let ratio_sets = [[1, 1, 1], [5, 3, 2], [7, 11, 13, 17]]
   list.each(totals, fn(units) {
     list.each(ratio_sets, fn(ratios) {
-      allocate_to_units(units, ratios, catalog.jpy())
+      allocate_to_units(units, ratios, money.jpy)
       |> should.equal(units)
     })
   })
@@ -432,8 +430,8 @@ pub fn allocate_length_matches_ratios_test() -> Nil {
     [3, 2, 1],
   ]
   list.each(ratio_sets, fn(ratios) {
-    let m = currency.from_minor(1000, catalog.usd())
-    let assert Ok(parts) = currency.allocate(m, ratios)
+    let m = support.from_minor(1000, money.usd)
+    let assert Ok(parts) = money.allocate(m, ratios)
     list.length(parts)
     |> should.equal(list.length(ratios))
   })
@@ -444,10 +442,10 @@ pub fn allocate_single_ratio_returns_input_test() -> Nil {
   let k_set = [1, 2, 7, 100]
   list.each(units_set, fn(units) {
     list.each(k_set, fn(k) {
-      let m = currency.from_minor(units, catalog.usd())
-      let assert Ok(parts) = currency.allocate(m, [k])
+      let m = support.from_minor(units, money.usd)
+      let assert Ok(parts) = money.allocate(m, [k])
       let assert [only] = parts
-      let assert Ok(back) = currency.to_minor(only, rounding.HalfEven)
+      let assert Ok(back) = money.to_minor(only, decimal.HalfEven)
       back
       |> should.equal(units)
     })
@@ -455,12 +453,12 @@ pub fn allocate_single_ratio_returns_input_test() -> Nil {
 }
 
 pub fn allocate_zero_money_yields_zero_parts_test() -> Nil {
-  let m = currency.from_minor(0, catalog.usd())
+  let m = support.from_minor(0, money.usd)
   let ratio_sets = [[1, 1, 1], [7, 3, 5], [1]]
   list.each(ratio_sets, fn(ratios) {
-    let assert Ok(parts) = currency.allocate(m, ratios)
+    let assert Ok(parts) = money.allocate(m, ratios)
     list.each(parts, fn(p) {
-      let assert Ok(u) = currency.to_minor(p, rounding.HalfEven)
+      let assert Ok(u) = money.to_minor(p, decimal.HalfEven)
       u
       |> should.equal(0)
     })
@@ -468,13 +466,13 @@ pub fn allocate_zero_money_yields_zero_parts_test() -> Nil {
 }
 
 pub fn allocate_large_ratios_test() -> Nil {
-  let m = currency.from_minor(1_000_000, catalog.usd())
+  let m = support.from_minor(1_000_000, money.usd)
   let ratios = [100_000, 200_000, 300_000, 400_000]
-  let assert Ok(parts) = currency.allocate(m, ratios)
+  let assert Ok(parts) = money.allocate(m, ratios)
   let sum =
     parts
     |> list.map(fn(p) {
-      let assert Ok(u) = currency.to_minor(p, rounding.HalfEven)
+      let assert Ok(u) = money.to_minor(p, decimal.HalfEven)
       u
     })
     |> list.fold(0, int.add)
@@ -489,8 +487,8 @@ pub fn from_minor_to_minor_round_trip_usd_test() -> Nil {
     0, 1, 99, 100, 1234, 99_999, 1_000_000, -1, -100, -1234, -99_999,
   ]
   list.each(units_set, fn(u) {
-    let m = currency.from_minor(u, catalog.usd())
-    let assert Ok(back) = currency.to_minor(m, rounding.HalfEven)
+    let m = support.from_minor(u, money.usd)
+    let assert Ok(back) = money.to_minor(m, decimal.HalfEven)
     back
     |> should.equal(u)
   })
@@ -499,8 +497,8 @@ pub fn from_minor_to_minor_round_trip_usd_test() -> Nil {
 pub fn from_minor_to_minor_round_trip_jpy_test() -> Nil {
   let units_set = [0, 1, 100, 9999, -1, -100, -9999]
   list.each(units_set, fn(u) {
-    let m = currency.from_minor(u, catalog.jpy())
-    let assert Ok(back) = currency.to_minor(m, rounding.HalfEven)
+    let m = support.from_minor(u, money.jpy)
+    let assert Ok(back) = money.to_minor(m, decimal.HalfEven)
     back
     |> should.equal(u)
   })
@@ -510,11 +508,11 @@ pub fn money_add_commutativity_test() -> Nil {
   let pairs = [#(100, 200), #(-100, 200), #(0, 0), #(1, 999), #(-1, -999)]
   list.each(pairs, fn(p) {
     let #(a_u, b_u) = p
-    let a = currency.from_minor(a_u, catalog.usd())
-    let b = currency.from_minor(b_u, catalog.usd())
-    let assert Ok(ab) = currency.add(a, b)
-    let assert Ok(ba) = currency.add(b, a)
-    currency.equal(ab, ba)
+    let a = support.from_minor(a_u, money.usd)
+    let b = support.from_minor(b_u, money.usd)
+    let assert Ok(ab) = money.add(a, b)
+    let assert Ok(ba) = money.add(b, a)
+    support.money_equal(ab, ba)
     |> should.be_true
   })
 }
@@ -522,9 +520,9 @@ pub fn money_add_commutativity_test() -> Nil {
 pub fn money_subtract_self_zero_test() -> Nil {
   let units_set = [0, 1, 100, 999_999, -1, -100]
   list.each(units_set, fn(u) {
-    let m = currency.from_minor(u, catalog.usd())
-    let assert Ok(diff) = currency.subtract(m, m)
-    let assert Ok(back) = currency.to_minor(diff, rounding.HalfEven)
+    let m = support.from_minor(u, money.usd)
+    let assert Ok(diff) = money.subtract(m, m)
+    let assert Ok(back) = money.to_minor(diff, decimal.HalfEven)
     back
     |> should.equal(0)
   })
@@ -533,9 +531,9 @@ pub fn money_subtract_self_zero_test() -> Nil {
 pub fn money_negate_involution_test() -> Nil {
   let units_set = [0, 1, 100, 999_999, -1, -100]
   list.each(units_set, fn(u) {
-    let m = currency.from_minor(u, catalog.usd())
-    let twice = currency.negate(currency.negate(m))
-    currency.equal(twice, m)
+    let m = support.from_minor(u, money.usd)
+    let twice = money.negate(money.negate(m))
+    support.money_equal(twice, m)
     |> should.be_true
   })
 }
@@ -543,9 +541,10 @@ pub fn money_negate_involution_test() -> Nil {
 pub fn money_multiply_by_one_test() -> Nil {
   let units_set = [0, 1, 100, 999_999, -1, -100]
   list.each(units_set, fn(u) {
-    let m = currency.from_minor(u, catalog.usd())
-    let assert Ok(prod) = currency.multiply(m, decimal.one())
-    currency.equal(prod, m)
+    let m = support.from_minor(u, money.usd)
+    let assert Ok(prod) =
+      money.multiply(m, by: decimal.one(), rounding: decimal.HalfEven)
+    support.money_equal(prod, m)
     |> should.be_true
   })
 }
@@ -554,9 +553,9 @@ pub fn money_compare_matches_decimal_test() -> Nil {
   let pairs = [#(100, 200), #(0, 0), #(-100, 100), #(99, 99)]
   list.each(pairs, fn(p) {
     let #(a_u, b_u) = p
-    let ma = currency.from_minor(a_u, catalog.usd())
-    let mb = currency.from_minor(b_u, catalog.usd())
-    let assert Ok(money_cmp) = currency.compare(ma, mb)
+    let ma = support.from_minor(a_u, money.usd)
+    let mb = support.from_minor(b_u, money.usd)
+    let assert Ok(money_cmp) = money.compare(ma, mb)
     money_cmp
     |> should.equal(int.compare(a_u, b_u))
   })
@@ -567,28 +566,28 @@ pub fn money_compare_matches_decimal_test() -> Nil {
 pub fn to_minor_half_even_rounds_to_even_test() -> Nil {
   // 0.005 cents → HalfEven → 0 (last whole cent 0 is even, banker's
   // rule rounds half-to-even).
-  let m = currency.new_money(d("0.005"), catalog.usd())
-  let assert Ok(units) = currency.to_minor(m, rounding.HalfEven)
+  let m = money.Money(d("0.005"), money.usd)
+  let assert Ok(units) = money.to_minor(m, decimal.HalfEven)
   units
   |> should.equal(0)
 }
 
 pub fn to_minor_half_up_rounds_away_from_zero_test() -> Nil {
   // 0.005 cents → HalfUp → 1 cent.
-  let m = currency.new_money(d("0.005"), catalog.usd())
-  let assert Ok(units) = currency.to_minor(m, rounding.HalfUp)
+  let m = money.Money(d("0.005"), money.usd)
+  let assert Ok(units) = money.to_minor(m, decimal.HalfUp)
   units
   |> should.equal(1)
 }
 
 pub fn to_minor_half_even_15_25_pattern_test() -> Nil {
   // 0.015 → 0.02 (next even), 0.025 → 0.02 (also even).
-  let m015 = currency.new_money(d("0.015"), catalog.usd())
-  let m025 = currency.new_money(d("0.025"), catalog.usd())
-  let assert Ok(u015) = currency.to_minor(m015, rounding.HalfEven)
+  let m015 = money.Money(d("0.015"), money.usd)
+  let m025 = money.Money(d("0.025"), money.usd)
+  let assert Ok(u015) = money.to_minor(m015, decimal.HalfEven)
   u015
   |> should.equal(2)
-  let assert Ok(u025) = currency.to_minor(m025, rounding.HalfEven)
+  let assert Ok(u025) = money.to_minor(m025, decimal.HalfEven)
   u025
   |> should.equal(2)
 }
@@ -606,9 +605,9 @@ pub fn payment_matches_amortization_first_period_test() -> Nil {
     let principal = d(p_in)
     let rate = d(r_in)
     let assert Ok(pmt) = interest.payment(principal, rate, n, dg)
-    let assert Ok(rows) = amortization.schedule(principal, rate, n, dg)
+    let assert Ok(rows) = interest.schedule(principal, rate, n, dg)
     let assert [head, ..] = rows
-    decimal.equal(amortization.payment(head), pmt)
+    decimal.equal(head.payment, pmt)
     |> should.be_true
   })
 }
@@ -618,7 +617,7 @@ pub fn ear_freq_one_identity_test() -> Nil {
   list.each(rates, fn(r_in) {
     let r = d(r_in)
     let assert Ok(ear) = interest.effective_annual_rate(r, 1, 6)
-    decimal.equal(decimal.round(ear, 6, rounding.HalfEven), r)
+    decimal.equal(support.round(ear, 6, decimal.HalfEven), r)
     |> should.be_true
   })
 }
@@ -628,7 +627,7 @@ pub fn fv_rate_zero_equals_pv_test() -> Nil {
   list.each(principals, fn(p_in) {
     let p = d(p_in)
     let assert Ok(fv) = interest.future_value(p, decimal.zero(), 12, 2)
-    decimal.equal(fv, decimal.round(p, 2, rounding.HalfEven))
+    decimal.equal(fv, support.round(p, 2, decimal.HalfEven))
     |> should.be_true
   })
 }
@@ -638,7 +637,7 @@ pub fn pv_rate_zero_equals_fv_test() -> Nil {
   list.each(futures, fn(f_in) {
     let f = d(f_in)
     let assert Ok(pv) = interest.present_value(f, decimal.zero(), 12, 2)
-    decimal.equal(pv, decimal.round(f, 2, rounding.HalfEven))
+    decimal.equal(pv, support.round(f, 2, decimal.HalfEven))
     |> should.be_true
   })
 }
@@ -649,26 +648,12 @@ pub fn simple_interest_linear_in_periods_test() -> Nil {
     let #(p_in, r_in) = case_
     let p = d(p_in)
     let r = d(r_in)
-    let assert Ok(i_n) = interest.simple_interest(p, r, 5, 6)
-    let assert Ok(i_2n) = interest.simple_interest(p, r, 10, 6)
-    let assert Ok(double) = decimal.multiply(i_n, decimal.from_int(2))
+    let assert Ok(i_n) = interest.simple(p, r, 5, 6)
+    let assert Ok(i_2n) = interest.simple(p, r, 10, 6)
+    let assert Ok(double) = decimal.multiply(i_n, support.int(2))
     decimal.equal(
-      decimal.round(double, 6, rounding.HalfEven),
-      decimal.round(i_2n, 6, rounding.HalfEven),
-    )
-    |> should.be_true
-  })
-}
-
-pub fn compound_interest_rate_zero_test() -> Nil {
-  let cases = [#("1000", 5), #("12345.67", 3)]
-  list.each(cases, fn(case_) {
-    let #(p_in, yrs) = case_
-    let p = d(p_in)
-    let assert Ok(ci) = interest.compound_interest(p, decimal.zero(), yrs, 1, 4)
-    decimal.equal(
-      decimal.round(ci, 4, rounding.HalfEven),
-      decimal.round(p, 4, rounding.HalfEven),
+      support.round(double, 6, decimal.HalfEven),
+      support.round(i_2n, 6, decimal.HalfEven),
     )
     |> should.be_true
   })
@@ -681,9 +666,9 @@ fn run_schedule(
   rate_str: String,
   periods: Int,
   digits: Int,
-) -> List(amortization.Period) {
+) -> List(interest.Period) {
   let assert Ok(rows) =
-    amortization.schedule(d(principal_str), d(rate_str), periods, digits)
+    interest.schedule(d(principal_str), d(rate_str), periods, digits)
   rows
 }
 
@@ -698,7 +683,7 @@ pub fn schedule_final_balance_is_zero_test() -> Nil {
     let #(p, r, n, dg) = case_
     let rows = run_schedule(p, r, n, dg)
     let assert Ok(last) = list.last(rows)
-    decimal.is_zero(amortization.balance(last))
+    decimal.is_zero(last.balance)
     |> should.be_true
   })
 }
@@ -716,7 +701,7 @@ pub fn schedule_principal_paid_sums_to_principal_test() -> Nil {
     let rows = run_schedule(p, r, n, dg)
     let sum =
       list.fold(rows, decimal.zero(), fn(acc, row) {
-        let assert Ok(next) = decimal.add(acc, amortization.principal_paid(row))
+        let assert Ok(next) = decimal.add(acc, row.principal_paid)
         next
       })
     decimal.equal(sum, principal)
@@ -733,7 +718,7 @@ pub fn schedule_balance_monotonic_test() -> Nil {
   list.each(cases, fn(case_) {
     let #(p, r, n, dg) = case_
     let rows = run_schedule(p, r, n, dg)
-    let balances = list.map(rows, amortization.balance)
+    let balances = list.map(rows, fn(row) { row.balance })
     check_monotonic_nonincreasing(balances)
   })
 }
@@ -753,32 +738,32 @@ fn check_monotonic_nonincreasing(xs: List(decimal.Decimal)) -> Nil {
 
 pub fn schedule_period_indices_consecutive_test() -> Nil {
   let rows = run_schedule("1000", "0.01", 5, 2)
-  list.map(rows, amortization.index)
+  list.map(rows, fn(row) { row.index })
   |> should.equal([1, 2, 3, 4, 5])
 }
 
 pub fn schedule_payments_constant_except_last_test() -> Nil {
   let rows = run_schedule("1000", "0.01", 5, 2)
   let assert [head, ..rest] = rows
-  let head_pmt = amortization.payment(head)
+  let head_pmt = head.payment
   let rest_init = drop_last(rest)
   list.each(rest_init, fn(row) {
-    decimal.equal(amortization.payment(row), head_pmt)
+    decimal.equal(row.payment, head_pmt)
     |> should.be_true
   })
 }
 
 pub fn schedule_single_period_closes_test() -> Nil {
-  let assert Ok(rows) = amortization.schedule(d("1000"), d("0.01"), 1, 2)
+  let assert Ok(rows) = interest.schedule(d("1000"), d("0.01"), 1, 2)
   list.length(rows)
   |> should.equal(1)
   let assert [only] = rows
   decimal.equal(
-    amortization.principal_paid(only),
-    decimal.round(d("1000"), 2, rounding.HalfEven),
+    only.principal_paid,
+    support.round(d("1000"), 2, decimal.HalfEven),
   )
   |> should.be_true
-  decimal.is_zero(amortization.balance(only))
+  decimal.is_zero(only.balance)
   |> should.be_true
 }
 
@@ -823,14 +808,14 @@ pub fn parse_expiry_year_zero_consistency_test() -> Nil {
 }
 
 pub fn expiry_valid_monotonic_in_today_test() -> Nil {
-  let expiry = #(12, 2028)
-  card.expiry_valid(expiry: expiry, today: #(1, 2026))
+  let expiry = card.Expiry(12, 2028)
+  card.expiry_valid(expiry, today: card.Expiry(1, 2026))
   |> should.be_true
-  card.expiry_valid(expiry: expiry, today: #(1, 2028))
+  card.expiry_valid(expiry, today: card.Expiry(1, 2028))
   |> should.be_true
-  card.expiry_valid(expiry: expiry, today: #(12, 2028))
+  card.expiry_valid(expiry, today: card.Expiry(12, 2028))
   |> should.be_true
-  card.expiry_valid(expiry: expiry, today: #(1, 2029))
+  card.expiry_valid(expiry, today: card.Expiry(1, 2029))
   |> should.be_false
 }
 

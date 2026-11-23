@@ -102,7 +102,7 @@ pub fn fuzz_decimal_parser_short_strings_test() -> Nil {
   iterate(prng, trials, fn(p) {
     let #(length, p1) = int_in_range(p, 0, 12)
     let #(s, p2) = gen_random_byte_string(p1, length)
-    case decimal.from_string(s) {
+    case decimal.parse(s) {
       Ok(_) -> p2
       // typed errors are fine
       Error(decimal.EmptyInput) -> p2
@@ -124,7 +124,7 @@ pub fn fuzz_decimal_parser_long_strings_test() -> Nil {
   let prng = Prng(state: 73)
   iterate(prng, 50, fn(p) {
     let #(s, p2) = gen_random_byte_string(p, 200)
-    case decimal.from_string(s) {
+    case decimal.parse(s) {
       Ok(_) -> p2
       Error(decimal.EmptyInput) -> p2
       Error(decimal.InvalidCharacter(_, _)) -> p2
@@ -144,12 +144,12 @@ pub fn fuzz_decimal_parser_digit_heavy_test() -> Nil {
   iterate(prng, trials, fn(p) {
     let #(length, p1) = int_in_range(p, 1, 30)
     let #(s, p2) = random_digit_heavy(p1, length)
-    case decimal.from_string(s) {
+    case decimal.parse(s) {
       Ok(d) -> {
-        // If parsing succeeded, to_string then from_string should round
+        // If parsing succeeded, to_string then parse should round
         // trip exactly.
         let rendered = decimal.to_string(d)
-        case decimal.from_string(rendered) {
+        case decimal.parse(rendered) {
           Ok(d2) ->
             case decimal.equal(d, d2) {
               True -> p2
@@ -197,7 +197,6 @@ pub fn fuzz_card_validate_test() -> Nil {
       Error(card.InvalidLength(_)) -> p2
       Error(card.InvalidLuhn) -> p2
       Error(card.UnknownBrand) -> p2
-      Error(card.InvalidExpiry) -> p2
     }
   })
   Nil
@@ -208,14 +207,13 @@ pub fn fuzz_card_mask_test() -> Nil {
   iterate(prng, trials, fn(p) {
     let #(length, p1) = int_in_range(p, 0, 25)
     let #(s, p2) = gen_pan_like(p1, length)
-    case card.mask(s, card.default_mask()) {
+    case card.mask(s, card.default_mask) {
       Ok(_) -> p2
       Error(card.EmptyInput) -> p2
       Error(card.InvalidCharacter) -> p2
       Error(card.InvalidLength(_)) -> p2
       Error(card.InvalidLuhn) -> p2
       Error(card.UnknownBrand) -> p2
-      Error(card.InvalidExpiry) -> p2
     }
   })
   Nil

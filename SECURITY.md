@@ -29,7 +29,7 @@ on security triage:
 
 - **`finanza/decimal`** — incorrect rounding or silent precision loss
   affecting monetary calculations.
-- **`finanza/currency`** — currency mismatch handling, allocation
+- **`finanza/money`** — currency mismatch handling, allocation
   rounding, integer-overflow on `to_minor` / `from_minor` conversions.
 - **`finanza/interest`** — formula correctness for `payment`,
   `future_value`, `present_value`, and amortization schedules.
@@ -39,11 +39,10 @@ on security triage:
 
 ## Known boundaries
 
-- **JavaScript target precision**: On the JavaScript target, `Decimal`
-  coefficients are bounded by `Number.MAX_SAFE_INTEGER` (2^53 - 1).
-  Operations that would exceed this bound return `PrecisionExceeded`
-  rather than silently losing precision. The Erlang target uses
-  arbitrary-precision integers.
+- **Precision**: `Decimal` coefficients are bounded by 2^53 - 1 on
+  both targets, so results match on Erlang and JavaScript. Operations
+  that would exceed this bound return `PrecisionExceeded` rather than
+  silently losing precision.
 - **No live data**: the ISO 4217 currency catalog and the card-brand
   IIN ranges are static snapshots. They are not authoritative for
   newly issued or recently retired codes. Applications that need

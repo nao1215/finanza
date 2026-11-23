@@ -10,20 +10,20 @@
 //// the relation runs on both targets.
 
 import finanza/decimal
-import finanza/decimal/rounding
 import metamon
 import metamon/generator.{type Generator}
 import metamon/generator/range
+import support
 
-fn mode_generator() -> Generator(rounding.Mode) {
+fn mode_generator() -> Generator(decimal.RoundingMode) {
   generator.element_of([
-    rounding.HalfEven,
-    rounding.HalfUp,
-    rounding.HalfDown,
-    rounding.Up,
-    rounding.Down,
-    rounding.Ceiling,
-    rounding.Floor,
+    decimal.HalfEven,
+    decimal.HalfUp,
+    decimal.HalfDown,
+    decimal.Up,
+    decimal.Down,
+    decimal.Ceiling,
+    decimal.Floor,
   ])
 }
 
@@ -51,7 +51,11 @@ fn abs(n: Int) -> Int {
 }
 
 /// `numerator / denominator` rounded with `mode`; `denominator > 0`.
-fn round_div(numerator: Int, denominator: Int, mode: rounding.Mode) -> Int {
+fn round_div(
+  numerator: Int,
+  denominator: Int,
+  mode: decimal.RoundingMode,
+) -> Int {
   let q = numerator / denominator
   let r = numerator - q * denominator
   let sign = case numerator < 0 {
@@ -63,29 +67,29 @@ fn round_div(numerator: Int, denominator: Int, mode: rounding.Mode) -> Int {
     True -> q
     False ->
       case mode {
-        rounding.Down -> q
-        rounding.Up -> q + sign
-        rounding.Ceiling ->
+        decimal.Down -> q
+        decimal.Up -> q + sign
+        decimal.Ceiling ->
           case sign > 0 {
             True -> q + 1
             False -> q
           }
-        rounding.Floor ->
+        decimal.Floor ->
           case sign < 0 {
             True -> q - 1
             False -> q
           }
-        rounding.HalfUp ->
+        decimal.HalfUp ->
           case twice >= denominator {
             True -> q + sign
             False -> q
           }
-        rounding.HalfDown ->
+        decimal.HalfDown ->
           case twice > denominator {
             True -> q + sign
             False -> q
           }
-        rounding.HalfEven ->
+        decimal.HalfEven ->
           case twice > denominator, twice == denominator {
             True, _ -> q + sign
             _, True ->
@@ -109,13 +113,13 @@ pub fn round_matches_the_integer_oracle_test() -> Nil {
     ),
     fn(input) {
       let #(coefficient, exponent, digits, mode) = input
-      let d = decimal.new(coefficient: coefficient, exponent: exponent)
-      let rounded = decimal.round(d: d, digits: digits, mode: mode)
+      let d = support.new(coefficient: coefficient, exponent: exponent)
+      let rounded = support.round(d, digits: digits, rounding: mode)
       let expected = case exponent >= 0 - digits {
         // Already at or coarser than the target: the value is kept.
         True -> d
         False ->
-          decimal.new(
+          support.new(
             coefficient: round_div(
               coefficient,
               pow10(0 - digits - exponent),
@@ -124,8 +128,8 @@ pub fn round_matches_the_integer_oracle_test() -> Nil {
             exponent: 0 - digits,
           )
       }
-      decimal.equal(a: rounded, b: expected)
-      && decimal.exponent(d: rounded) == 0 - digits
+      decimal.equal(rounded, expected)
+      && decimal.exponent(rounded) == 0 - digits
     },
   )
 }
@@ -142,11 +146,11 @@ pub fn divide_matches_the_integer_oracle_test() -> Nil {
     ),
     fn(input) {
       let #(ca, ea, cb, eb, digits, mode) = input
-      let a = decimal.new(coefficient: ca, exponent: ea)
-      let b = decimal.new(coefficient: cb, exponent: eb)
+      let a = support.new(coefficient: ca, exponent: ea)
+      let b = support.new(coefficient: cb, exponent: eb)
       case cb == 0 {
         True ->
-          decimal.divide(a: a, b: b, digits: digits, mode: mode)
+          decimal.divide(a, b, digits: digits, rounding: mode)
           == Error(decimal.DivisionByZero)
         False -> {
           // a / b * 10^digits = ca * 10^(ea - eb + digits) / cb
@@ -160,12 +164,12 @@ pub fn divide_matches_the_integer_oracle_test() -> Nil {
             False -> #(numerator, denominator)
           }
           let expected =
-            decimal.new(
+            support.new(
               coefficient: round_div(numerator, denominator, mode),
               exponent: 0 - digits,
             )
-          case decimal.divide(a: a, b: b, digits: digits, mode: mode) {
-            Ok(quotient) -> decimal.equal(a: quotient, b: expected)
+          case decimal.divide(a, b, digits: digits, rounding: mode) {
+            Ok(quotient) -> decimal.equal(quotient, expected)
             Error(_) -> False
           }
         }
