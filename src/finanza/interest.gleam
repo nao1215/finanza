@@ -13,6 +13,22 @@
 //// A `Decimal` has at most 28 places, so a `digits` above 28 returns
 //// `DigitsOutOfRange` before any work is done, and `future_value` and
 //// `present_value` work at no more than 28 places.
+////
+//// The growth per period is `1 + rate`, which has to fit a `Decimal` too.
+//// A rate written to 16 places, such as `0.0041666666666667` for 5% a
+//// year over 12 months, makes `1 + rate` a 17-digit coefficient. The
+//// rate in it is then rounded half-even to the most places at which
+//// `decimal.add` computes the sum. A rate between -1 and 1 with 15 places
+//// or fewer is used as it is, and one with more is rounded to 15, so it
+//// moves by at most 5e-16.
+//// `future_value`, `present_value`, `payment` and
+//// `effective_annual_rate` compound with that base; each period's
+//// interest in `schedule` and the numerator of `payment` use the rate as
+//// given.
+////
+//// The number of periods, and of compounding periods per year, is at
+//// most 1200 (100 years of months). The functions loop once per period in
+//// constant stack, on JavaScript too.
 
 import gleam/bool
 import gleam/int
@@ -203,7 +219,11 @@ pub fn payment(
       rounding: decimal.HalfEven,
     ))
     use denominator <- result.try(decimal.subtract(decimal.one(), inverse))
-    // The exact numerator, or as many of its places as fit.
+    // The exact numerator, or as many of its places as fit. It uses the
+    // rate as given, while `growth` may use it rounded to 15 places (see
+    // `one_plus`). That moves the payment by at most about 2e-10 for the
+    // monthly rates of 1% to 20% over 360 and 1200 periods, and `schedule`
+    // charges the rate as given and clears what is left in its last row.
     use numerator <- result.try(multiply_at_most(principal, rate, max_digits))
     // Dividing at more than the working precision would overflow for
     // ordinary loans and add no accuracy, so pad afterwards instead.
@@ -253,7 +273,8 @@ pub fn effective_annual_rate(
 /// Returns the amortization schedule of a loan repaid with `payment`
 /// each period, or an empty list for 0 periods. Each period's interest is the balance times the rate,
 /// rounded half-even to `digits` places. The last period pays off what
-/// is left, so the final balance is exactly zero.
+/// is left, so the final balance is exactly zero. Returns
+/// `PeriodsOutOfRange` for negative periods or more than 1200.
 ///
 /// ## Examples
 ///
@@ -294,6 +315,9 @@ pub fn schedule(
   |> result.map_error(ArithmeticFailed)
 }
 
+// One row per step. Each step builds its row and the loop calls itself
+// last, so it runs in constant stack on both targets for any number of
+// periods. `rows` collects the rows in reverse.
 fn schedule_loop(
   payment payment: Decimal,
   rate rate: Decimal,
@@ -303,14 +327,40 @@ fn schedule_loop(
   balance balance: Decimal,
   rows rows: List(Period),
 ) -> Result(List(Period), decimal.ArithmeticError) {
-  use <- bool.guard(when: index > periods, return: Ok(list.reverse(rows)))
+  case index {
+    _ if index > periods -> Ok(list.reverse(rows))
+    _ ->
+      case schedule_row(payment, rate, periods, digits, index, balance) {
+        Ok(row) ->
+          schedule_loop(
+            payment: payment,
+            rate: rate,
+            periods: periods,
+            digits: digits,
+            index: index + 1,
+            balance: row.balance,
+            rows: [row, ..rows],
+          )
+        Error(error) -> Error(error)
+      }
+  }
+}
+
+fn schedule_row(
+  payment: Decimal,
+  rate: Decimal,
+  periods: Int,
+  digits: Int,
+  index: Int,
+  balance: Decimal,
+) -> Result(Period, decimal.ArithmeticError) {
   use interest <- result.try(rounded.multiply(
     balance,
     rate,
     digits: digits,
     rounding: decimal.HalfEven,
   ))
-  use row <- result.try(case index == periods {
+  case index == periods {
     // The last row clears whatever rounding has left on the balance.
     True -> {
       use payment <- result.try(decimal.add(interest, balance))
@@ -327,16 +377,7 @@ fn schedule_loop(
       use balance <- result.map(decimal.subtract(balance, principal_paid))
       Period(index:, payment:, interest:, principal_paid:, balance:)
     }
-  })
-  schedule_loop(
-    payment: payment,
-    rate: rate,
-    periods: periods,
-    digits: digits,
-    index: index + 1,
-    balance: row.balance,
-    rows: [row, ..rows],
-  )
+  }
 }
 
 // Internals ------------------------------------------------------------------
@@ -354,31 +395,61 @@ fn growth_factor(
   )
 }
 
+// 1 + rate. A coefficient holds about 16 digits, so a rate written to 16
+// places, such as 0.0041666666666667, makes 1 + rate need 17. The rate is
+// tried at its own places first, so a sum `decimal.add` computes is
+// exact. Otherwise the rate is rounded half-even to the most places at
+// which `decimal.add` computes 1 + rate, and then 1 is added exactly.
+// `decimal.add` scales 1 to the rate's places first, and 1 at 16 places
+// is past 2^53 - 1, so a rate with 16 places or more is always rounded,
+// even when the sum, such as 1 + -0.8999999999999999, would fit.
+//
+// When the rate keeps one place or more, this equals 1 + rate rounded
+// half-even at that place: adding the integer 1 moves both neighbours by
+// 1, so the distances to them stay the same, and 1 is 10^k units of the
+// k-th place, an even number, so the parity of each neighbour's last
+// digit stays the same too. This holds for a
+// negative rate as well. A rate between -1 and 1 is rounded to no fewer
+// than 15 places, so it moves by at most 5e-16. Every period's growth uses
+// this base; each period's interest in `schedule` and the numerator of
+// `payment` still use the rate as given, which is exact there.
 fn one_plus(rate: Decimal) -> Result(Decimal, InterestError) {
-  decimal.add(decimal.one(), rate) |> result.map_error(ArithmeticFailed)
+  at_most(int.max(0, -decimal.exponent(rate)), fn(places) {
+    use rate <- result.try(decimal.round(
+      rate,
+      digits: places,
+      rounding: decimal.HalfEven,
+    ))
+    decimal.add(decimal.one(), rate)
+  })
+  |> result.map_error(ArithmeticFailed)
 }
 
 // accumulator × base^exponent, one multiplication at a time, rounding
-// between steps so the coefficient stays in range.
+// between steps so the coefficient stays in range. The loop calls itself
+// last, so it runs in constant stack for any exponent.
 fn pow_loop(
   base base: Decimal,
   exponent exponent: Int,
   accumulator accumulator: Decimal,
   digits digits: Int,
 ) -> Result(Decimal, InterestError) {
-  use <- bool.guard(when: exponent <= 0, return: Ok(accumulator))
-  // Give up places when the product would otherwise overflow. Fast
-  // growth loses precision instead of failing.
-  use product <- result.try(
-    multiply_at_most(accumulator, base, digits)
-    |> result.map_error(ArithmeticFailed),
-  )
-  pow_loop(
-    base: base,
-    exponent: exponent - 1,
-    accumulator: product,
-    digits: digits,
-  )
+  case exponent {
+    _ if exponent <= 0 -> Ok(accumulator)
+    // Give up places when the product would otherwise overflow. Fast
+    // growth loses precision instead of failing.
+    _ ->
+      case multiply_at_most(accumulator, base, digits) {
+        Ok(product) ->
+          pow_loop(
+            base: base,
+            exponent: exponent - 1,
+            accumulator: product,
+            digits: digits,
+          )
+        Error(error) -> Error(ArithmeticFailed(error))
+      }
+  }
 }
 
 // accumulator ÷ base^exponent, the inverse of pow_loop.
@@ -388,24 +459,30 @@ fn discount_loop(
   accumulator accumulator: Decimal,
   digits digits: Int,
 ) -> Result(Decimal, InterestError) {
-  use <- bool.guard(when: exponent <= 0, return: Ok(accumulator))
-  use quotient <- result.try(
-    at_most(digits, fn(places) {
-      decimal.divide(
-        accumulator,
-        base,
-        digits: places,
-        rounding: decimal.HalfEven,
-      )
-    })
-    |> result.map_error(ArithmeticFailed),
-  )
-  discount_loop(
-    base: base,
-    exponent: exponent - 1,
-    accumulator: quotient,
-    digits: digits,
-  )
+  case exponent {
+    _ if exponent <= 0 -> Ok(accumulator)
+    _ -> {
+      let quotient =
+        at_most(digits, fn(places) {
+          decimal.divide(
+            accumulator,
+            base,
+            digits: places,
+            rounding: decimal.HalfEven,
+          )
+        })
+      case quotient {
+        Ok(quotient) ->
+          discount_loop(
+            base: base,
+            exponent: exponent - 1,
+            accumulator: quotient,
+            digits: digits,
+          )
+        Error(error) -> Error(ArithmeticFailed(error))
+      }
+    }
+  }
 }
 
 // Multiplies and rounds half-even at the most places up to `digits`,

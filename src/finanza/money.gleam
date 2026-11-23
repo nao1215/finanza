@@ -414,7 +414,7 @@ pub fn allocate(
     True -> -1
     False -> 1
   }
-  distribute(shares, magnitude - used)
+  distribute(shares, magnitude - used, [])
   |> list.try_map(fn(share) { from_minor(sign * share, in: money.currency) })
 }
 
@@ -446,14 +446,19 @@ fn add_modulo(a: Int, b: Int, modulus: Int) -> #(Int, Int) {
   }
 }
 
-fn distribute(shares: List(#(Int, Int)), remainder: Int) -> List(Int) {
+// Adds one minor unit to each of the first `remainder` shares with a
+// non-zero ratio. `done` collects the shares in reverse, so the loop
+// calls itself last and runs in constant stack for any number of ratios.
+fn distribute(
+  shares: List(#(Int, Int)),
+  remainder: Int,
+  done: List(Int),
+) -> List(Int) {
   case shares {
-    [] -> []
-    [#(ratio, share), ..rest] if ratio > 0 && remainder > 0 -> [
-      share + 1,
-      ..distribute(rest, remainder - 1)
-    ]
-    [#(_, share), ..rest] -> [share, ..distribute(rest, remainder)]
+    [] -> list.reverse(done)
+    [#(ratio, share), ..rest] if ratio > 0 && remainder > 0 ->
+      distribute(rest, remainder - 1, [share + 1, ..done])
+    [#(_, share), ..rest] -> distribute(rest, remainder, [share, ..done])
   }
 }
 

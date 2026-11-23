@@ -31,6 +31,8 @@ src/finanza/
   internal/
     rounded.gleam # multiply-then-round on the exact product, for money
                   # and interest (internal: not public API, not in docs)
+    limb.gleam    # exact products of two coefficients in 7-digit limbs,
+                  # shared by decimal and rounded (no Decimal dependency)
 test/
   finanza_test.gleam   # gleeunit entry
   support.gleam        # let-assert helpers for in-range test inputs
