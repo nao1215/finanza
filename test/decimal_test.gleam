@@ -94,13 +94,13 @@ pub fn divide_at_max_safe_digits_for_one_over_seven_succeeds_test() -> Nil {
 }
 
 pub fn divide_above_max_safe_digits_exceeds_precision_test() -> Nil {
-  // Documented failure rounding: `digits = max_safe_digits + 1` already
-  // exceeds the safe coefficient bound for unit-magnitude operands.
+  // 1/7 at 16 places is 1428571428571429, within 2^53 - 1; at 17 places
+  // the coefficient passes it.
   case
     decimal.divide(
       support.int(1),
       support.int(7),
-      digits: 15 + 1,
+      digits: 17,
       rounding: decimal.HalfEven,
     )
   {
@@ -213,9 +213,9 @@ pub fn try_new_accepts_boundary_values_test() -> Nil {
   let assert Ok(_) = decimal.new(coefficient: 1, exponent: 15)
   // 9 * 10^15 = 9_000_000_000_000_000 ≤ max
   let assert Ok(_) = decimal.new(coefficient: 9, exponent: 15)
-  // Negative exponents are unaffected — only |coefficient| is bounded.
+  // The smallest exponent is -28.
   let assert Ok(_) =
-    decimal.new(coefficient: 9_007_199_254_740_991, exponent: -100)
+    decimal.new(coefficient: 9_007_199_254_740_991, exponent: -28)
   Nil
 }
 
@@ -784,10 +784,9 @@ fn list_iter(items: List(a), f: fn(a) -> Nil) -> Nil {
 
 // --- Range limits ---------------------------------------------------------
 
-pub fn zero_with_a_huge_exponent_is_accepted_quickly_test() -> Nil {
-  let assert Ok(zero) = decimal.new(coefficient: 0, exponent: 1_000_000_000)
-  assert decimal.to_string(zero) == "0"
-  assert decimal.parse("0e999999999") |> result.map(decimal.is_zero) == Ok(True)
+pub fn zero_with_a_huge_exponent_is_rejected_quickly_test() -> Nil {
+  assert decimal.new(coefficient: 0, exponent: 1_000_000_000) == Error(Nil)
+  assert decimal.parse("0e999999999") == Error(decimal.ParsedValueTooLarge)
 }
 
 pub fn products_obey_the_constructor_range_test() -> Nil {
@@ -809,7 +808,7 @@ pub fn rounding_up_past_the_range_fails_test() -> Nil {
 }
 
 pub fn dividing_a_tiny_value_rounds_to_zero_test() -> Nil {
-  let tiny = support.parse("1e-40")
+  let tiny = support.parse("1e-28")
   assert decimal.divide(
       tiny,
       decimal.one(),
@@ -832,7 +831,8 @@ pub fn dividing_a_tiny_value_rounds_to_zero_test() -> Nil {
 }
 
 pub fn far_apart_exponents_do_not_hang_test() -> Nil {
-  let tiny = support.parse("1e-1000000")
+  assert decimal.parse("1e-1000000") == Error(decimal.ParsedValueTooLarge)
+  let tiny = support.parse("1e-28")
   assert decimal.compare(tiny, decimal.one()) == order.Lt
   assert decimal.to_int(tiny) == Error(Nil)
   assert decimal.round(tiny, digits: 2, rounding: decimal.HalfEven)

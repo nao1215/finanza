@@ -255,7 +255,7 @@ pub fn payment_negative_digits_rejected_test() -> Nil {
     periods: 12,
     digits: -1,
   )
-  |> should.equal(Error(interest.NegativeDigits))
+  |> should.equal(Error(interest.DigitsOutOfRange))
 }
 
 // --- Card boundaries ----------------------------------------------------

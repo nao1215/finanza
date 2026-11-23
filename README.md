@@ -96,7 +96,7 @@ The API reference is on [HexDocs](https://hexdocs.pm/finanza/).
 
 ## Notes
 
-- A decimal's coefficient, and the integer a positive exponent stands for, stay within ±9,007,199,254,740,991 (2^53 − 1) on both targets, so results match on Erlang and JavaScript. Larger results are `PrecisionExceeded` errors.
+- A decimal's exponent is between -28 and 15, so it has at most 28 places, and its coefficient, and the integer a positive exponent stands for, stay within ±9,007,199,254,740,991 (2^53 − 1) on both targets, so results match on Erlang and JavaScript. Results outside the range are `PrecisionExceeded` errors, and `decimal.parse` rejects such values and any input over 1,000 bytes, so untrusted text cannot make a huge value.
 - The 15 built-in currencies and the card brand rules are snapshots taken in May 2026. There is no exchange rate lookup or BIN database.
 
 How the package is tested is described in [doc/testing.md](https://github.com/nao1215/finanza/blob/main/doc/testing.md).

@@ -222,7 +222,7 @@ pub fn fuzz_simple_interest_test() -> Nil {
       Error(interest.RateBelowMinusOne) -> p4
       Error(interest.PeriodsOutOfRange) -> p4
       Error(interest.CompoundsOutOfRange) -> p4
-      Error(interest.NegativeDigits) -> p4
+      Error(interest.DigitsOutOfRange) -> p4
       Error(interest.ArithmeticFailed(_)) -> p4
     }
   })
@@ -242,7 +242,7 @@ pub fn fuzz_future_value_test() -> Nil {
       Error(interest.RateBelowMinusOne) -> p4
       Error(interest.PeriodsOutOfRange) -> p4
       Error(interest.CompoundsOutOfRange) -> p4
-      Error(interest.NegativeDigits) -> p4
+      Error(interest.DigitsOutOfRange) -> p4
       Error(interest.ArithmeticFailed(_)) -> p4
     }
   })
@@ -262,7 +262,7 @@ pub fn fuzz_present_value_test() -> Nil {
       Error(interest.RateBelowMinusOne) -> p4
       Error(interest.PeriodsOutOfRange) -> p4
       Error(interest.CompoundsOutOfRange) -> p4
-      Error(interest.NegativeDigits) -> p4
+      Error(interest.DigitsOutOfRange) -> p4
       Error(interest.ArithmeticFailed(_)) -> p4
     }
   })
@@ -282,7 +282,7 @@ pub fn fuzz_payment_test() -> Nil {
       Error(interest.RateBelowMinusOne) -> p4
       Error(interest.PeriodsOutOfRange) -> p4
       Error(interest.CompoundsOutOfRange) -> p4
-      Error(interest.NegativeDigits) -> p4
+      Error(interest.DigitsOutOfRange) -> p4
       Error(interest.ArithmeticFailed(_)) -> p4
     }
   })
@@ -301,7 +301,7 @@ pub fn fuzz_effective_annual_rate_test() -> Nil {
       Error(interest.RateBelowMinusOne) -> p3
       Error(interest.PeriodsOutOfRange) -> p3
       Error(interest.CompoundsOutOfRange) -> p3
-      Error(interest.NegativeDigits) -> p3
+      Error(interest.DigitsOutOfRange) -> p3
       Error(interest.ArithmeticFailed(_)) -> p3
     }
   })
@@ -324,7 +324,7 @@ pub fn fuzz_amortization_schedule_test() -> Nil {
       Error(interest.RateBelowMinusOne) -> p4
       Error(interest.PeriodsOutOfRange) -> p4
       Error(interest.CompoundsOutOfRange) -> p4
-      Error(interest.NegativeDigits) -> p4
+      Error(interest.DigitsOutOfRange) -> p4
       Error(interest.ArithmeticFailed(_)) -> p4
     }
   })

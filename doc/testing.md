@@ -4,7 +4,7 @@
 
 ## Examples and unit tests
 
-Every module has a test file under `test/`: decimal parsing, arithmetic and every rounding mode at `2.5`, `3.5`, `10.005` and their negatives, money formatting and allocation, interest and amortization schedules, and card validation with public test PANs only. `test/dig_round1_boundary_test.gleam` and `test/dig_round9_boundary_test.gleam` probe the limits (JavaScript's safe-integer cap, empty and huge inputs). `test/readme_test.gleam` runs the README examples, and `test/support.gleam` holds the `let assert` helpers for inputs known to be in range.
+Every module has a test file under `test/`: decimal parsing, arithmetic and every rounding mode at `2.5`, `3.5`, `10.005` and their negatives, money formatting and allocation, interest and amortization schedules, and card validation with public test PANs only. `test/dig_round1_boundary_test.gleam` and `test/dig_round9_boundary_test.gleam` probe the limits (JavaScript's safe-integer cap, empty and huge inputs). `test/dig_round11_range_test.gleam` pins the range of a decimal from both sides of each bound (exponent -28 and 15, coefficient 2^53 − 1, 1,000 bytes of input), feeds huge exponents, digit counts and inputs to `parse`, compares `divide` with an unbounded-integer oracle on Erlang, and checks `allocate` near 2^53 on both targets. `test/readme_test.gleam` runs the README examples, and `test/support.gleam` holds the `let assert` helpers for inputs known to be in range.
 
 ## Generated properties
 

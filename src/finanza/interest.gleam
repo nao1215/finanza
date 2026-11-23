@@ -9,6 +9,10 @@
 //// monthly rates over 30 years. `future_value` and `present_value` work
 //// at `digits + 2` places; `payment`, `effective_annual_rate` and
 //// `schedule` work at 7, so a `digits` above 7 pads with zeros there.
+////
+//// A `Decimal` has at most 28 places, so a `digits` above 28 returns
+//// `DigitsOutOfRange` before any work is done, and `future_value` and
+//// `present_value` work at no more than 28 places.
 
 import gleam/bool
 import gleam/int
@@ -31,8 +35,9 @@ pub type InterestError {
   /// The number of compounding periods per year was zero, negative or
   /// above 1200.
   CompoundsOutOfRange
-  /// `digits` was negative.
-  NegativeDigits
+  /// `digits` was negative or above 28, the most places a `Decimal`
+  /// has.
+  DigitsOutOfRange
   /// The decimal arithmetic underneath failed.
   ArithmeticFailed(decimal.ArithmeticError)
 }
@@ -57,6 +62,9 @@ pub type Period {
 const max_periods: Int = 1200
 
 const max_work_digits: Int = 7
+
+// The most places a Decimal has, from the range in finanza/decimal.
+const max_digits: Int = 28
 
 const max_safe_coefficient: Int = 9_007_199_254_740_991
 
@@ -118,7 +126,7 @@ pub fn future_value(
     base: base,
     exponent: periods,
     accumulator: present,
-    digits: int.max(max_work_digits, digits + 2),
+    digits: growth_digits(digits),
   ))
   round_to(grown, digits)
 }
@@ -140,7 +148,7 @@ pub fn present_value(
     base: base,
     exponent: periods,
     accumulator: future,
-    digits: int.max(max_work_digits, digits + 2),
+    digits: growth_digits(digits),
   ))
   round_to(discounted, digits)
 }
@@ -397,11 +405,14 @@ fn divide_at_most(
 }
 
 // Rounds `a` to the most places up to `digits` at which a × b stays in
-// range. Returns `a` unchanged when no number of places is enough; the
-// multiplication then reports the overflow.
+// range, both in the coefficient and in the exponent. Returns `a`
+// unchanged when no number of places is enough; the multiplication then
+// reports the overflow.
 fn round_for_multiply(a: Decimal, b: Decimal, digits: Int) -> Decimal {
   let b_magnitude = int.absolute_value(decimal.coefficient(b))
   use <- bool.guard(when: digits < 0 || b_magnitude == 0, return: a)
+  // The product has the exponent -digits + exponent(b), at least -28.
+  let digits = int.min(digits, max_digits + decimal.exponent(b))
   let candidate = round_or_keep(a, digits)
   case
     int.absolute_value(decimal.coefficient(candidate)) * b_magnitude
@@ -419,6 +430,12 @@ fn round_or_keep(value: Decimal, digits: Int) -> Decimal {
     Ok(rounded) -> rounded
     Error(decimal.PrecisionExceeded) | Error(decimal.DivisionByZero) -> value
   }
+}
+
+// The places future_value and present_value work at: two more than
+// asked for, at least 7 and at most 28.
+fn growth_digits(digits: Int) -> Int {
+  int.min(max_digits, int.max(max_work_digits, digits + 2))
 }
 
 fn round_to(value: Decimal, digits: Int) -> Result(Decimal, InterestError) {
@@ -458,6 +475,9 @@ fn check_periods(
 }
 
 fn check_digits(digits: Int) -> Result(Nil, InterestError) {
-  use <- bool.guard(when: digits < 0, return: Error(NegativeDigits))
+  use <- bool.guard(
+    when: digits < 0 || digits > max_digits,
+    return: Error(DigitsOutOfRange),
+  )
   Ok(Nil)
 }
