@@ -7,6 +7,8 @@ and this project is expected to follow [Semantic Versioning](https://semver.org/
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-11-23
+
 ### Breaking
 
 - The `card` functions that read a card number or an expiry, `validate`, `mask`, `last_four`, `bin`, `detect_brand`, `luhn_valid` and `parse_expiry`, reject input over 1,000 bytes before reading it, the limit `decimal.parse` has: `validate`, `mask`, `last_four` and `bin` return `InvalidLength` with the byte count, `detect_brand` returns `Unknown`, `luhn_valid` returns `False` and `parse_expiry` returns `Error(Nil)`. Before, they split the whole input into graphemes first, so ten megabytes of digits took ten megabytes of work and many times that in memory, and `validate` of 1,001 spaces was `EmptyInput`. A card number has at most 19 digits, so the limit leaves room for any spacing. `normalize` still transforms its whole input.
