@@ -7,6 +7,8 @@ and this project is expected to follow [Semantic Versioning](https://semver.org/
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-11-23
+
 ### Breaking
 
 The public API shrinks from 8 modules to 4: `finanza/decimal`, `finanza/money`, `finanza/interest` and `finanza/card`. Only `Decimal` stays opaque; the other types are plain records that you build and read directly.
