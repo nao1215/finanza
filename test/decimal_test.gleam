@@ -1,10 +1,10 @@
 import gleam/list
 import gleam/order
-import gleam/string
+import gleam/result
 import gleeunit/should
 
 import finanza/decimal
-import finanza/decimal/rounding
+import support
 
 // --- Constructors --------------------------------------------------------
 
@@ -14,12 +14,12 @@ pub fn zero_is_zero_test() -> Nil {
 }
 
 pub fn one_is_one_test() -> Nil {
-  decimal.equal(decimal.one(), decimal.from_int(1))
+  decimal.equal(decimal.one(), support.int(1))
   |> should.be_true
 }
 
 pub fn from_int_test() -> Nil {
-  let value = decimal.from_int(42)
+  let value = support.int(42)
   decimal.coefficient(value)
   |> should.equal(42)
   decimal.exponent(value)
@@ -28,7 +28,7 @@ pub fn from_int_test() -> Nil {
 
 pub fn from_float_half_test() -> Nil {
   let assert Ok(value) = decimal.from_float(0.5)
-  decimal.equal(value, decimal.new(coefficient: 5, exponent: -1))
+  decimal.equal(value, support.new(coefficient: 5, exponent: -1))
   |> should.be_true
 }
 
@@ -40,49 +40,43 @@ pub fn from_float_zero_test() -> Nil {
 
 pub fn from_float_negative_test() -> Nil {
   let assert Ok(value) = decimal.from_float(-1.25)
-  decimal.equal(value, decimal.new(coefficient: -125, exponent: -2))
+  decimal.equal(value, support.new(coefficient: -125, exponent: -2))
   |> should.be_true
 }
 
-pub fn from_string_accepts_lowercase_e_test() -> Nil {
-  let assert Ok(d) = decimal.from_string("1e10")
+pub fn parse_accepts_lowercase_e_test() -> Nil {
+  let assert Ok(d) = decimal.parse("1e10")
   decimal.to_string(d) |> should.equal("10000000000")
 }
 
-pub fn from_string_accepts_uppercase_e_test() -> Nil {
-  let assert Ok(d) = decimal.from_string("1E10")
+pub fn parse_accepts_uppercase_e_test() -> Nil {
+  let assert Ok(d) = decimal.parse("1E10")
   decimal.to_string(d) |> should.equal("10000000000")
 }
 
-pub fn from_string_accepts_positive_exponent_test() -> Nil {
-  let assert Ok(d) = decimal.from_string("1.5e+2")
+pub fn parse_accepts_positive_exponent_test() -> Nil {
+  let assert Ok(d) = decimal.parse("1.5e+2")
   decimal.to_string(d) |> should.equal("150")
 }
 
-pub fn from_string_accepts_negative_exponent_test() -> Nil {
-  let assert Ok(d) = decimal.from_string("1e-10")
+pub fn parse_accepts_negative_exponent_test() -> Nil {
+  let assert Ok(d) = decimal.parse("1e-10")
   decimal.to_string(d) |> should.equal("0.0000000001")
 }
 
-pub fn from_string_accepts_fractional_with_exponent_test() -> Nil {
-  let assert Ok(d) = decimal.from_string("3.14e2")
+pub fn parse_accepts_fractional_with_exponent_test() -> Nil {
+  let assert Ok(d) = decimal.parse("3.14e2")
   decimal.to_string(d) |> should.equal("314")
 }
 
-pub fn from_string_rejects_empty_exponent_test() -> Nil {
-  decimal.from_string("1e")
-  |> should.equal(Error(decimal.InvalidCharacter(char: "e", position: 1)))
+pub fn parse_rejects_empty_exponent_test() -> Nil {
+  decimal.parse("1e")
+  |> should.equal(Error(decimal.InvalidCharacter(character: "e", position: 1)))
 }
 
-pub fn from_string_rejects_garbage_exponent_test() -> Nil {
-  decimal.from_string("1eXYZ")
-  |> should.equal(Error(decimal.InvalidCharacter(char: "e", position: 1)))
-}
-
-pub fn max_safe_digits_is_at_least_15_test() -> Nil {
-  // The documented unit-magnitude precision ceiling.
-  { decimal.max_safe_digits >= 15 }
-  |> should.be_true
+pub fn parse_rejects_garbage_exponent_test() -> Nil {
+  decimal.parse("1eXYZ")
+  |> should.equal(Error(decimal.InvalidCharacter(character: "e", position: 1)))
 }
 
 pub fn divide_at_max_safe_digits_for_one_over_seven_succeeds_test() -> Nil {
@@ -90,24 +84,24 @@ pub fn divide_at_max_safe_digits_for_one_over_seven_succeeds_test() -> Nil {
   // without `PrecisionExceeded`.
   let assert Ok(result) =
     decimal.divide(
-      a: decimal.from_int(1),
-      b: decimal.from_int(7),
-      digits: decimal.max_safe_digits,
-      mode: rounding.HalfEven,
+      support.int(1),
+      support.int(7),
+      digits: 15,
+      rounding: decimal.HalfEven,
     )
   decimal.to_string(result)
   |> should.equal("0.142857142857143")
 }
 
 pub fn divide_above_max_safe_digits_exceeds_precision_test() -> Nil {
-  // Documented failure mode: `digits = max_safe_digits + 1` already
+  // Documented failure rounding: `digits = max_safe_digits + 1` already
   // exceeds the safe coefficient bound for unit-magnitude operands.
   case
     decimal.divide(
-      a: decimal.from_int(1),
-      b: decimal.from_int(7),
-      digits: decimal.max_safe_digits + 1,
-      mode: rounding.HalfEven,
+      support.int(1),
+      support.int(7),
+      digits: 15 + 1,
+      rounding: decimal.HalfEven,
     )
   {
     Error(decimal.PrecisionExceeded) -> Nil
@@ -115,50 +109,8 @@ pub fn divide_above_max_safe_digits_exceeds_precision_test() -> Nil {
   }
 }
 
-pub fn format_checked_multi_char_thousands_rejected_test() -> Nil {
-  let assert Ok(d) = decimal.from_string("1234.5")
-  decimal.format_checked(d: d, thousands: "ab", decimal_separator: ".")
-  |> should.equal(
-    Error(decimal.MultiCharSeparator(field: "thousands", value: "ab")),
-  )
-}
-
-pub fn format_checked_multi_char_decimal_rejected_test() -> Nil {
-  let assert Ok(d) = decimal.from_string("1234.5")
-  decimal.format_checked(d: d, thousands: ",", decimal_separator: ",,")
-  |> should.equal(
-    Error(decimal.MultiCharSeparator(field: "decimal", value: ",,")),
-  )
-}
-
-pub fn format_checked_colliding_separators_rejected_test() -> Nil {
-  let assert Ok(d) = decimal.from_string("1234.5")
-  decimal.format_checked(d: d, thousands: ".", decimal_separator: ".")
-  |> should.equal(Error(decimal.SeparatorsCollide(value: ".")))
-}
-
-pub fn format_checked_empty_decimal_separator_rejected_test() -> Nil {
-  let assert Ok(d) = decimal.from_string("1234.5")
-  decimal.format_checked(d: d, thousands: ",", decimal_separator: "")
-  |> should.equal(Error(decimal.EmptyDecimalSeparator))
-}
-
-pub fn format_checked_accepts_standard_locale_test() -> Nil {
-  let assert Ok(d) = decimal.from_string("1234567.89")
-  decimal.format_checked(d: d, thousands: ",", decimal_separator: ".")
-  |> should.equal(Ok("1,234,567.89"))
-  decimal.format_checked(d: d, thousands: ".", decimal_separator: ",")
-  |> should.equal(Ok("1.234.567,89"))
-}
-
-pub fn format_checked_accepts_empty_thousands_test() -> Nil {
-  let assert Ok(d) = decimal.from_string("1234.5")
-  decimal.format_checked(d: d, thousands: "", decimal_separator: ".")
-  |> should.equal(Ok("1234.5"))
-}
-
 pub fn new_explicit_test() -> Nil {
-  let value = decimal.new(coefficient: 12_345, exponent: -2)
+  let value = support.new(coefficient: 12_345, exponent: -2)
   decimal.coefficient(value)
   |> should.equal(12_345)
   decimal.exponent(value)
@@ -186,51 +138,44 @@ pub fn round_pads_to_requested_digits_test() -> Nil {
   ]
   list.each(cases, fn(c) {
     let #(input, digits, expected) = c
-    let assert Ok(d) = decimal.from_string(input)
-    decimal.round(d, digits, rounding.HalfEven)
+    let assert Ok(d) = decimal.parse(input)
+    support.round(d, digits, decimal.HalfEven)
     |> decimal.to_string
     |> should.equal(expected)
   })
 }
 
 pub fn round_result_exponent_is_negative_digits_test() -> Nil {
-  let assert Ok(d) = decimal.from_string("1")
-  let rounded = decimal.round(d, 2, rounding.HalfEven)
+  let assert Ok(d) = decimal.parse("1")
+  let rounded = support.round(d, 2, decimal.HalfEven)
   decimal.exponent(rounded) |> should.equal(-2)
 }
 
 // round is the non-failing form of rescale targeting exponent -digits;
 // for any in-range value the two must agree, so they cannot drift apart.
 pub fn round_agrees_with_rescale_for_padding_test() -> Nil {
-  let assert Ok(d) = decimal.from_string("7")
-  let assert Ok(via_rescale) = decimal.rescale(d, -3, rounding.HalfEven)
-  decimal.round(d, 3, rounding.HalfEven)
+  let assert Ok(d) = decimal.parse("7")
+  let assert Ok(via_rescale) =
+    decimal.round(d, digits: 3, rounding: decimal.HalfEven)
+  support.round(d, 3, decimal.HalfEven)
   |> decimal.to_string
   |> should.equal(decimal.to_string(via_rescale))
 }
 
 pub fn rescale_pads_when_input_is_coarser_test() -> Nil {
   let assert Ok(two_k_padded) =
-    decimal.rescale(
-      d: decimal.from_int(2000),
-      target_exponent: -2,
-      mode: rounding.HalfEven,
-    )
+    decimal.round(support.int(2000), digits: 2, rounding: decimal.HalfEven)
   decimal.to_string(two_k_padded)
   |> should.equal("2000.00")
   let assert Ok(one_padded) =
-    decimal.rescale(
-      d: decimal.one(),
-      target_exponent: -4,
-      mode: rounding.HalfEven,
-    )
+    decimal.round(decimal.one(), digits: 4, rounding: decimal.HalfEven)
   decimal.to_string(one_padded)
   |> should.equal("1.0000")
 }
 
 // Issue #23: try_new rejects coefficients whose rendered form would
 // exceed max_safe_coefficient. Without this guard, to_string(new(c, e))
-// could produce a digit string that from_string refuses to parse,
+// could produce a digit string that parse refuses to parse,
 // breaking the round-trip property.
 //
 // The "coefficient exactly one above the safe ceiling" probe is only
@@ -240,92 +185,54 @@ pub fn rescale_pads_when_input_is_coarser_test() -> Nil {
 // cover both targets because they multiply small literals at runtime.
 @target(erlang)
 pub fn try_new_rejects_overlarge_coefficient_test() -> Nil {
-  decimal.try_from_int(n: 9_007_199_254_740_992)
-  |> should.equal(Error(decimal.CoefficientTooLarge))
-  decimal.try_new(coefficient: 9_007_199_254_740_992, exponent: 0)
-  |> should.equal(Error(decimal.CoefficientTooLarge))
-  decimal.try_new(coefficient: -9_007_199_254_740_992, exponent: 0)
-  |> should.equal(Error(decimal.CoefficientTooLarge))
+  decimal.from_int(9_007_199_254_740_992)
+  |> should.equal(Error(Nil))
+  decimal.new(coefficient: 9_007_199_254_740_992, exponent: 0)
+  |> should.equal(Error(Nil))
+  decimal.new(coefficient: -9_007_199_254_740_992, exponent: 0)
+  |> should.equal(Error(Nil))
 }
 
 pub fn try_new_rejects_overlarge_rendered_value_test() -> Nil {
   // |c| * 10^e exceeds max_safe_coefficient (9_007_199_254_740_991 ≈ 9e15)
-  decimal.try_new(coefficient: 1, exponent: 20)
-  |> should.equal(Error(decimal.CoefficientTooLarge))
-  decimal.try_new(coefficient: 5, exponent: 16)
-  |> should.equal(Error(decimal.CoefficientTooLarge))
-  decimal.try_new(coefficient: 1, exponent: 16)
-  |> should.equal(Error(decimal.CoefficientTooLarge))
-}
-
-// Issue #67: the panic message from `decimal.new` used to always
-// claim `|coefficient| > 9007199254740991`, even on the
-// rendered-overflow path where `|coefficient|` was demonstrably tiny
-// (e.g. `new(1, 19)`). The message now distinguishes the two paths.
-// The panic itself can't be asserted directly with gleeunit; the
-// `new_overflow_message/2` helper is exposed `@internal` precisely so
-// the message construction is covered.
-pub fn new_overflow_message_rendered_path_omits_coefficient_claim_test() -> Nil {
-  let msg = decimal.new_overflow_message(coefficient: 1, exponent: 19)
-  string.contains(msg, "|coefficient| > 9007199254740991")
-  |> should.be_false
-}
-
-pub fn new_overflow_message_rendered_path_names_rendered_value_test() -> Nil {
-  let msg = decimal.new_overflow_message(coefficient: 1, exponent: 19)
-  string.contains(msg, "rendered value") |> should.be_true
-  string.contains(msg, "10^19") |> should.be_true
+  decimal.new(coefficient: 1, exponent: 20)
+  |> should.equal(Error(Nil))
+  decimal.new(coefficient: 5, exponent: 16)
+  |> should.equal(Error(Nil))
+  decimal.new(coefficient: 1, exponent: 16)
+  |> should.equal(Error(Nil))
 }
 
 @target(erlang)
-pub fn new_overflow_message_coefficient_path_unchanged_test() -> Nil {
-  let msg =
-    decimal.new_overflow_message(
-      coefficient: 9_007_199_254_740_992,
-      exponent: 0,
-    )
-  string.contains(msg, "|coefficient| > 9007199254740991")
-  |> should.be_true
-  string.contains(msg, "rendered value") |> should.be_false
-}
-
-pub fn new_overflow_message_negative_coefficient_uses_absolute_value_test() -> Nil {
-  // -1 × 10^19 also overflows the rendered range — the message should
-  // talk about the rendered path and report the absolute value.
-  let msg = decimal.new_overflow_message(coefficient: -1, exponent: 19)
-  string.contains(msg, "rendered value") |> should.be_true
-  string.contains(msg, "1 × 10^19") |> should.be_true
-}
-
 pub fn try_new_accepts_boundary_values_test() -> Nil {
   let assert Ok(_) =
-    decimal.try_new(coefficient: 9_007_199_254_740_991, exponent: 0)
+    decimal.new(coefficient: 9_007_199_254_740_991, exponent: 0)
   let assert Ok(_) =
-    decimal.try_new(coefficient: -9_007_199_254_740_991, exponent: 0)
+    decimal.new(coefficient: -9_007_199_254_740_991, exponent: 0)
   // 1 * 10^15 = 1_000_000_000_000_000 ≤ max
-  let assert Ok(_) = decimal.try_new(coefficient: 1, exponent: 15)
+  let assert Ok(_) = decimal.new(coefficient: 1, exponent: 15)
   // 9 * 10^15 = 9_000_000_000_000_000 ≤ max
-  let assert Ok(_) = decimal.try_new(coefficient: 9, exponent: 15)
+  let assert Ok(_) = decimal.new(coefficient: 9, exponent: 15)
   // Negative exponents are unaffected — only |coefficient| is bounded.
   let assert Ok(_) =
-    decimal.try_new(coefficient: 9_007_199_254_740_991, exponent: -100)
+    decimal.new(coefficient: 9_007_199_254_740_991, exponent: -100)
   Nil
 }
 
 pub fn round_trip_holds_for_every_try_new_test() -> Nil {
-  // For any Decimal built through try_new, from_string(to_string(d))
+  // For any Decimal built through try_new, parse(to_string(d))
   // returns the same Decimal.
   let cases = [
-    decimal.try_new(coefficient: 1, exponent: 15),
-    decimal.try_new(coefficient: 9_007_199_254_740_991, exponent: 0),
-    decimal.try_new(coefficient: -9_007_199_254_740_991, exponent: -3),
-    decimal.try_new(coefficient: 12_345, exponent: -2),
-    decimal.try_from_int(n: 0),
-    decimal.try_from_int(n: 9_007_199_254_740_991),
+    decimal.new(coefficient: 1, exponent: 15),
+    decimal.new(coefficient: 9_007_199_254_740_991, exponent: 0),
+    decimal.new(coefficient: -9_007_199_254_740_991, exponent: -3),
+    decimal.new(coefficient: 12_345, exponent: -2),
+    decimal.from_int(0),
+    decimal.from_int(9_007_199_254_740_991),
   ]
   list.each(cases, fn(result) {
     let assert Ok(d) = result
-    let assert Ok(parsed) = decimal.from_string(decimal.to_string(d))
+    let assert Ok(parsed) = decimal.parse(decimal.to_string(d))
     decimal.equal(d, parsed)
     |> should.be_true
   })
@@ -334,7 +241,7 @@ pub fn round_trip_holds_for_every_try_new_test() -> Nil {
 // --- Parser --------------------------------------------------------------
 
 pub fn parse_integer_test() -> Nil {
-  let assert Ok(value) = decimal.from_string("123")
+  let assert Ok(value) = decimal.parse("123")
   decimal.coefficient(value)
   |> should.equal(123)
   decimal.exponent(value)
@@ -342,7 +249,7 @@ pub fn parse_integer_test() -> Nil {
 }
 
 pub fn parse_decimal_test() -> Nil {
-  let assert Ok(value) = decimal.from_string("3.14")
+  let assert Ok(value) = decimal.parse("3.14")
   decimal.coefficient(value)
   |> should.equal(314)
   decimal.exponent(value)
@@ -350,7 +257,7 @@ pub fn parse_decimal_test() -> Nil {
 }
 
 pub fn parse_negative_test() -> Nil {
-  let assert Ok(value) = decimal.from_string("-0.5")
+  let assert Ok(value) = decimal.parse("-0.5")
   decimal.coefficient(value)
   |> should.equal(-5)
   decimal.exponent(value)
@@ -358,7 +265,7 @@ pub fn parse_negative_test() -> Nil {
 }
 
 pub fn parse_positive_sign_test() -> Nil {
-  let assert Ok(value) = decimal.from_string("+42.0")
+  let assert Ok(value) = decimal.parse("+42.0")
   decimal.coefficient(value)
   |> should.equal(420)
   decimal.exponent(value)
@@ -366,7 +273,7 @@ pub fn parse_positive_sign_test() -> Nil {
 }
 
 pub fn parse_trailing_zeros_preserved_test() -> Nil {
-  let assert Ok(value) = decimal.from_string("1.50")
+  let assert Ok(value) = decimal.parse("1.50")
   decimal.coefficient(value)
   |> should.equal(150)
   decimal.exponent(value)
@@ -374,16 +281,16 @@ pub fn parse_trailing_zeros_preserved_test() -> Nil {
 }
 
 pub fn parse_empty_test() -> Nil {
-  decimal.from_string("")
+  decimal.parse("")
   |> should.equal(Error(decimal.EmptyInput))
 }
 
 pub fn parse_whitespace_only_test() -> Nil {
-  decimal.from_string("   ")
+  decimal.parse("   ")
   |> should.equal(Error(decimal.EmptyInput))
 }
 
-// Issue #74: from_string trims leading/trailing *Unicode* whitespace, not
+// Issue #74: parse trims leading/trailing *Unicode* whitespace, not
 // only ASCII. Real-world inputs — copy/paste from web pages, locale currency
 // formatting, CSV/Excel exports — carry NO-BREAK SPACE (U+00A0), NARROW NBSP
 // (U+202F), IDEOGRAPHIC SPACE (U+3000) and friends; the old ASCII-only trim
@@ -391,65 +298,64 @@ pub fn parse_whitespace_only_test() -> Nil {
 // codepoint as a plain space. These pin the documented lenient contract so the
 // ASCII-only surprise cannot return.
 pub fn parse_trims_ascii_whitespace_test() -> Nil {
-  let assert Ok(value) = decimal.from_string(" \t1.5\n ")
+  let assert Ok(value) = decimal.parse(" \t1.5\n ")
   decimal.to_string(value) |> should.equal("1.5")
 }
 
 pub fn parse_trims_nbsp_test() -> Nil {
-  let assert Ok(value) = decimal.from_string("\u{00a0}1.5\u{00a0}")
+  let assert Ok(value) = decimal.parse("\u{00a0}1.5\u{00a0}")
   decimal.to_string(value) |> should.equal("1.5")
 }
 
 pub fn parse_trims_narrow_nbsp_test() -> Nil {
-  let assert Ok(value) = decimal.from_string("\u{202f}1.5\u{202f}")
+  let assert Ok(value) = decimal.parse("\u{202f}1.5\u{202f}")
   decimal.to_string(value) |> should.equal("1.5")
 }
 
 pub fn parse_trims_ideographic_space_test() -> Nil {
-  let assert Ok(value) = decimal.from_string("\u{3000}42\u{3000}")
+  let assert Ok(value) = decimal.parse("\u{3000}42\u{3000}")
   decimal.to_string(value) |> should.equal("42")
 }
 
 pub fn parse_trims_mixed_unicode_whitespace_test() -> Nil {
   // en/em/thin spaces (U+2002/U+2003/U+2009) and a line separator (U+2028).
-  let assert Ok(value) =
-    decimal.from_string("\u{2002}\u{2003}\u{2009}-0.25\u{2028}")
+  let assert Ok(value) = decimal.parse("\u{2002}\u{2003}\u{2009}-0.25\u{2028}")
   decimal.to_string(value) |> should.equal("-0.25")
 }
 
 pub fn parse_all_unicode_whitespace_is_empty_input_test() -> Nil {
-  decimal.from_string("\u{00a0}\u{3000}\u{202f}")
+  decimal.parse("\u{00a0}\u{3000}\u{202f}")
   |> should.equal(Error(decimal.EmptyInput))
 }
 
 pub fn parse_inner_unicode_whitespace_still_rejected_test() -> Nil {
   // Trimming is leading/trailing only — an inner NBSP is still invalid,
   // surfaced at its grapheme position rather than silently stripped.
-  decimal.from_string("1\u{00a0}5")
+  decimal.parse("1\u{00a0}5")
   |> should.equal(
-    Error(decimal.InvalidCharacter(char: "\u{00a0}", position: 1)),
+    Error(decimal.InvalidCharacter(character: "\u{00a0}", position: 1)),
   )
 }
 
 pub fn parse_double_decimal_test() -> Nil {
-  decimal.from_string("1.2.3")
+  decimal.parse("1.2.3")
   |> should.equal(Error(decimal.MultipleDecimalPoints))
 }
 
 pub fn parse_double_sign_test() -> Nil {
-  decimal.from_string("-1-2")
+  decimal.parse("-1-2")
   |> should.equal(Error(decimal.MultipleSigns))
 }
 
 pub fn parse_invalid_character_test() -> Nil {
-  decimal.from_string("12a3")
-  |> should.equal(Error(decimal.InvalidCharacter(char: "a", position: 2)))
+  decimal.parse("12a3")
+  |> should.equal(Error(decimal.InvalidCharacter(character: "a", position: 2)))
 }
 
 // --- Rendering -----------------------------------------------------------
 
 pub fn render_integer_test() -> Nil {
-  decimal.to_string(decimal.from_int(42))
+  decimal.to_string(support.int(42))
   |> should.equal("42")
 }
 
@@ -459,111 +365,111 @@ pub fn render_zero_test() -> Nil {
 }
 
 pub fn render_zero_with_fraction_test() -> Nil {
-  decimal.to_string(decimal.new(coefficient: 0, exponent: -3))
+  decimal.to_string(support.new(coefficient: 0, exponent: -3))
   |> should.equal("0.000")
 }
 
 pub fn render_simple_fraction_test() -> Nil {
-  decimal.to_string(decimal.new(coefficient: 314, exponent: -2))
+  decimal.to_string(support.new(coefficient: 314, exponent: -2))
   |> should.equal("3.14")
 }
 
 pub fn render_small_fraction_test() -> Nil {
-  decimal.to_string(decimal.new(coefficient: 5, exponent: -3))
+  decimal.to_string(support.new(coefficient: 5, exponent: -3))
   |> should.equal("0.005")
 }
 
 pub fn render_negative_test() -> Nil {
-  decimal.to_string(decimal.new(coefficient: -125, exponent: -2))
+  decimal.to_string(support.new(coefficient: -125, exponent: -2))
   |> should.equal("-1.25")
 }
 
 pub fn render_negative_small_test() -> Nil {
-  decimal.to_string(decimal.new(coefficient: -5, exponent: -3))
+  decimal.to_string(support.new(coefficient: -5, exponent: -3))
   |> should.equal("-0.005")
 }
 
 pub fn render_padded_integer_test() -> Nil {
-  decimal.to_string(decimal.new(coefficient: 12, exponent: 3))
+  decimal.to_string(support.new(coefficient: 12, exponent: 3))
   |> should.equal("12000")
 }
 
 pub fn render_preserves_trailing_zeros_test() -> Nil {
-  decimal.to_string(decimal.new(coefficient: 150, exponent: -2))
+  decimal.to_string(support.new(coefficient: 150, exponent: -2))
   |> should.equal("1.50")
 }
 
 // --- decimal.format ------------------------------------------------------
 
 pub fn format_basic_test() -> Nil {
-  let d = decimal.new(coefficient: 1_234_567, exponent: -2)
-  decimal.format(d: d, thousands: ",", decimal_separator: ".")
+  let d = support.new(coefficient: 1_234_567, exponent: -2)
+  decimal.format(d, thousands: ",", decimal_separator: ".")
   |> should.equal("12,345.67")
 }
 
 pub fn format_integer_only_test() -> Nil {
-  let d = decimal.from_int(n: 1_234_567)
-  decimal.format(d: d, thousands: ",", decimal_separator: ".")
+  let d = support.int(1_234_567)
+  decimal.format(d, thousands: ",", decimal_separator: ".")
   |> should.equal("1,234,567")
 }
 
 pub fn format_negative_test() -> Nil {
-  let d = decimal.new(coefficient: -1_234_567, exponent: -2)
-  decimal.format(d: d, thousands: ",", decimal_separator: ".")
+  let d = support.new(coefficient: -1_234_567, exponent: -2)
+  decimal.format(d, thousands: ",", decimal_separator: ".")
   |> should.equal("-12,345.67")
 }
 
 pub fn format_german_style_test() -> Nil {
-  let d = decimal.new(coefficient: 1_234_567, exponent: -2)
-  decimal.format(d: d, thousands: ".", decimal_separator: ",")
+  let d = support.new(coefficient: 1_234_567, exponent: -2)
+  decimal.format(d, thousands: ".", decimal_separator: ",")
   |> should.equal("12.345,67")
 }
 
 pub fn format_no_thousands_separator_test() -> Nil {
-  let d = decimal.new(coefficient: 1_234_567, exponent: -2)
-  decimal.format(d: d, thousands: "", decimal_separator: ".")
+  let d = support.new(coefficient: 1_234_567, exponent: -2)
+  decimal.format(d, thousands: "", decimal_separator: ".")
   |> should.equal("12345.67")
 }
 
 pub fn format_short_integer_test() -> Nil {
-  let d = decimal.from_int(n: 42)
-  decimal.format(d: d, thousands: ",", decimal_separator: ".")
+  let d = support.int(42)
+  decimal.format(d, thousands: ",", decimal_separator: ".")
   |> should.equal("42")
 }
 
 pub fn format_zero_test() -> Nil {
-  decimal.format(d: decimal.zero(), thousands: ",", decimal_separator: ".")
+  decimal.format(decimal.zero(), thousands: ",", decimal_separator: ".")
   |> should.equal("0")
 }
 
 // --- Sign predicates -----------------------------------------------------
 
 pub fn is_positive_test() -> Nil {
-  decimal.is_positive(decimal.from_int(3))
+  decimal.is_positive(support.int(3))
   |> should.be_true
-  decimal.is_positive(decimal.from_int(-3))
+  decimal.is_positive(support.int(-3))
   |> should.be_false
   decimal.is_positive(decimal.zero())
   |> should.be_false
 }
 
 pub fn is_negative_test() -> Nil {
-  decimal.is_negative(decimal.from_int(-3))
+  decimal.is_negative(support.int(-3))
   |> should.be_true
-  decimal.is_negative(decimal.from_int(3))
+  decimal.is_negative(support.int(3))
   |> should.be_false
   decimal.is_negative(decimal.zero())
   |> should.be_false
 }
 
 pub fn negate_test() -> Nil {
-  let n = decimal.negate(decimal.from_int(5))
+  let n = decimal.negate(support.int(5))
   decimal.coefficient(n)
   |> should.equal(-5)
 }
 
 pub fn absolute_test() -> Nil {
-  let a = decimal.absolute(decimal.from_int(-7))
+  let a = decimal.absolute(support.int(-7))
   decimal.coefficient(a)
   |> should.equal(7)
 }
@@ -571,53 +477,53 @@ pub fn absolute_test() -> Nil {
 // --- Arithmetic ----------------------------------------------------------
 
 pub fn add_basic_test() -> Nil {
-  let assert Ok(sum) = decimal.add(decimal.from_int(2), decimal.from_int(3))
-  decimal.equal(sum, decimal.from_int(5))
+  let assert Ok(sum) = decimal.add(support.int(2), support.int(3))
+  decimal.equal(sum, support.int(5))
   |> should.be_true
 }
 
 pub fn add_aligns_exponents_test() -> Nil {
-  let assert Ok(a) = decimal.from_string("0.1")
-  let assert Ok(b) = decimal.from_string("0.2")
+  let assert Ok(a) = decimal.parse("0.1")
+  let assert Ok(b) = decimal.parse("0.2")
   let assert Ok(sum) = decimal.add(a, b)
   decimal.to_string(sum)
   |> should.equal("0.3")
 }
 
 pub fn add_mixed_precision_test() -> Nil {
-  let assert Ok(a) = decimal.from_string("1.50")
-  let assert Ok(b) = decimal.from_string("0.005")
+  let assert Ok(a) = decimal.parse("1.50")
+  let assert Ok(b) = decimal.parse("0.005")
   let assert Ok(sum) = decimal.add(a, b)
   decimal.to_string(sum)
   |> should.equal("1.505")
 }
 
 pub fn add_large_negative_exponent_plus_zero_returns_operand_test() -> Nil {
-  let tiny = decimal.new(coefficient: 1, exponent: -20)
+  let tiny = support.new(coefficient: 1, exponent: -20)
   let assert Ok(sum) = decimal.add(tiny, decimal.zero())
   decimal.equal(sum, tiny)
   |> should.be_true
 }
 
 pub fn subtract_test() -> Nil {
-  let assert Ok(a) = decimal.from_string("10.00")
-  let assert Ok(b) = decimal.from_string("2.50")
+  let assert Ok(a) = decimal.parse("10.00")
+  let assert Ok(b) = decimal.parse("2.50")
   let assert Ok(diff) = decimal.subtract(a, b)
   decimal.to_string(diff)
   |> should.equal("7.50")
 }
 
 pub fn multiply_basic_test() -> Nil {
-  let assert Ok(a) = decimal.from_string("1.5")
-  let assert Ok(b) = decimal.from_string("2")
+  let assert Ok(a) = decimal.parse("1.5")
+  let assert Ok(b) = decimal.parse("2")
   let assert Ok(product) = decimal.multiply(a, b)
-  decimal.equal(product, decimal.from_int(3))
+  decimal.equal(product, support.int(3))
   |> should.be_true
 }
 
 pub fn multiply_fractions_test() -> Nil {
-  let assert Ok(a) = decimal.from_string("0.1")
-  let assert Ok(b) = decimal.from_string("0.2")
+  let assert Ok(a) = decimal.parse("0.1")
+  let assert Ok(b) = decimal.parse("0.2")
   let assert Ok(product) = decimal.multiply(a, b)
   decimal.to_string(product)
   |> should.equal("0.02")
@@ -627,12 +533,7 @@ pub fn multiply_fractions_test() -> Nil {
 
 pub fn divide_exact_test() -> Nil {
   let assert Ok(quotient) =
-    decimal.divide(
-      decimal.from_int(10),
-      decimal.from_int(4),
-      2,
-      rounding.HalfEven,
-    )
+    decimal.divide(support.int(10), support.int(4), 2, decimal.HalfEven)
   decimal.to_string(quotient)
   |> should.equal("2.50")
 }
@@ -641,12 +542,7 @@ pub fn divide_rounding_half_even_to_even_test() -> Nil {
   // 7 / 4 = 1.75; rounded to 1 dp via HalfEven → 1.8 (away from 1.7
   // since 1.75 is half between 1.7 (odd) and 1.8 (even)).
   let assert Ok(q) =
-    decimal.divide(
-      decimal.from_int(7),
-      decimal.from_int(4),
-      1,
-      rounding.HalfEven,
-    )
+    decimal.divide(support.int(7), support.int(4), 1, decimal.HalfEven)
   decimal.to_string(q)
   |> should.equal("1.8")
 }
@@ -654,49 +550,34 @@ pub fn divide_rounding_half_even_to_even_test() -> Nil {
 pub fn divide_half_even_ties_to_even_2_test() -> Nil {
   // 5/2 = 2.5 → HalfEven → 2 (even); HalfUp → 3
   let assert Ok(even) =
-    decimal.divide(
-      decimal.from_int(5),
-      decimal.from_int(2),
-      0,
-      rounding.HalfEven,
-    )
+    decimal.divide(support.int(5), support.int(2), 0, decimal.HalfEven)
   decimal.to_string(even)
   |> should.equal("2")
 }
 
 pub fn divide_half_up_test() -> Nil {
   let assert Ok(up) =
-    decimal.divide(decimal.from_int(5), decimal.from_int(2), 0, rounding.HalfUp)
+    decimal.divide(support.int(5), support.int(2), 0, decimal.HalfUp)
   decimal.to_string(up)
   |> should.equal("3")
 }
 
 pub fn divide_by_zero_test() -> Nil {
-  decimal.divide(decimal.from_int(1), decimal.zero(), 2, rounding.HalfEven)
+  decimal.divide(support.int(1), decimal.zero(), 2, decimal.HalfEven)
   |> should.equal(Error(decimal.DivisionByZero))
 }
 
 pub fn divide_repeating_test() -> Nil {
   // 1/3 to 4 decimal places: 0.3333
   let assert Ok(q) =
-    decimal.divide(
-      decimal.from_int(1),
-      decimal.from_int(3),
-      4,
-      rounding.HalfEven,
-    )
+    decimal.divide(support.int(1), support.int(3), 4, decimal.HalfEven)
   decimal.to_string(q)
   |> should.equal("0.3333")
 }
 
 pub fn divide_negative_test() -> Nil {
   let assert Ok(q) =
-    decimal.divide(
-      decimal.from_int(-5),
-      decimal.from_int(2),
-      0,
-      rounding.HalfUp,
-    )
+    decimal.divide(support.int(-5), support.int(2), 0, decimal.HalfUp)
   decimal.to_string(q)
   |> should.equal("-3")
 }
@@ -705,100 +586,100 @@ pub fn divide_negative_test() -> Nil {
 
 pub fn round_half_even_test() -> Nil {
   // 2.5 → 2 (round to even)
-  let value = decimal.new(coefficient: 25, exponent: -1)
-  decimal.round(value, 0, rounding.HalfEven)
+  let value = support.new(coefficient: 25, exponent: -1)
+  support.round(value, 0, decimal.HalfEven)
   |> decimal.to_string
   |> should.equal("2")
 }
 
 pub fn round_half_even_other_tie_test() -> Nil {
   // 3.5 → 4 (round to even)
-  let value = decimal.new(coefficient: 35, exponent: -1)
-  decimal.round(value, 0, rounding.HalfEven)
+  let value = support.new(coefficient: 35, exponent: -1)
+  support.round(value, 0, decimal.HalfEven)
   |> decimal.to_string
   |> should.equal("4")
 }
 
 pub fn round_half_up_test() -> Nil {
-  let value = decimal.new(coefficient: 25, exponent: -1)
-  decimal.round(value, 0, rounding.HalfUp)
+  let value = support.new(coefficient: 25, exponent: -1)
+  support.round(value, 0, decimal.HalfUp)
   |> decimal.to_string
   |> should.equal("3")
 }
 
 pub fn round_half_down_test() -> Nil {
-  let value = decimal.new(coefficient: 25, exponent: -1)
-  decimal.round(value, 0, rounding.HalfDown)
+  let value = support.new(coefficient: 25, exponent: -1)
+  support.round(value, 0, decimal.HalfDown)
   |> decimal.to_string
   |> should.equal("2")
 }
 
 pub fn round_up_away_from_zero_test() -> Nil {
-  let value = decimal.new(coefficient: 21, exponent: -1)
-  decimal.round(value, 0, rounding.Up)
+  let value = support.new(coefficient: 21, exponent: -1)
+  support.round(value, 0, decimal.Up)
   |> decimal.to_string
   |> should.equal("3")
-  let negative = decimal.new(coefficient: -21, exponent: -1)
-  decimal.round(negative, 0, rounding.Up)
+  let negative = support.new(coefficient: -21, exponent: -1)
+  support.round(negative, 0, decimal.Up)
   |> decimal.to_string
   |> should.equal("-3")
 }
 
 pub fn round_down_toward_zero_test() -> Nil {
-  let value = decimal.new(coefficient: 29, exponent: -1)
-  decimal.round(value, 0, rounding.Down)
+  let value = support.new(coefficient: 29, exponent: -1)
+  support.round(value, 0, decimal.Down)
   |> decimal.to_string
   |> should.equal("2")
-  let negative = decimal.new(coefficient: -29, exponent: -1)
-  decimal.round(negative, 0, rounding.Down)
+  let negative = support.new(coefficient: -29, exponent: -1)
+  support.round(negative, 0, decimal.Down)
   |> decimal.to_string
   |> should.equal("-2")
 }
 
 pub fn round_ceiling_test() -> Nil {
   // 2.1 → 3 (toward +∞)
-  let value = decimal.new(coefficient: 21, exponent: -1)
-  decimal.round(value, 0, rounding.Ceiling)
+  let value = support.new(coefficient: 21, exponent: -1)
+  support.round(value, 0, decimal.Ceiling)
   |> decimal.to_string
   |> should.equal("3")
   // -2.9 → -2 (toward +∞)
-  let negative = decimal.new(coefficient: -29, exponent: -1)
-  decimal.round(negative, 0, rounding.Ceiling)
+  let negative = support.new(coefficient: -29, exponent: -1)
+  support.round(negative, 0, decimal.Ceiling)
   |> decimal.to_string
   |> should.equal("-2")
 }
 
 pub fn round_floor_test() -> Nil {
   // 2.9 → 2 (toward -∞)
-  let value = decimal.new(coefficient: 29, exponent: -1)
-  decimal.round(value, 0, rounding.Floor)
+  let value = support.new(coefficient: 29, exponent: -1)
+  support.round(value, 0, decimal.Floor)
   |> decimal.to_string
   |> should.equal("2")
   // -2.1 → -3 (toward -∞)
-  let negative = decimal.new(coefficient: -21, exponent: -1)
-  decimal.round(negative, 0, rounding.Floor)
+  let negative = support.new(coefficient: -21, exponent: -1)
+  support.round(negative, 0, decimal.Floor)
   |> decimal.to_string
   |> should.equal("-3")
 }
 
 pub fn truncate_test() -> Nil {
-  let value = decimal.new(coefficient: 29, exponent: -1)
-  decimal.truncate(value, 0)
+  let value = support.new(coefficient: 29, exponent: -1)
+  support.round(value, digits: 0, rounding: decimal.Down)
   |> decimal.to_string
   |> should.equal("2")
 }
 
 pub fn round_pads_integer_to_requested_dp_test() -> Nil {
-  let value = decimal.from_int(5)
+  let value = support.int(5)
   // rounding an integer to 3 dp pads to exactly 3 fractional places (#75)
-  decimal.round(value, 3, rounding.HalfEven)
+  support.round(value, 3, decimal.HalfEven)
   |> decimal.to_string
   |> should.equal("5.000")
 }
 
 pub fn rescale_expand_test() -> Nil {
   let assert Ok(rescaled) =
-    decimal.rescale(decimal.from_int(5), -2, rounding.HalfEven)
+    decimal.round(support.int(5), digits: 2, rounding: decimal.HalfEven)
   decimal.to_string(rescaled)
   |> should.equal("5.00")
 }
@@ -806,10 +687,10 @@ pub fn rescale_expand_test() -> Nil {
 pub fn rescale_truncate_test() -> Nil {
   // 12.345 → 1 dp via HalfEven → 12.3 (remainder 45 of 100 is below half).
   let assert Ok(rescaled) =
-    decimal.rescale(
-      decimal.new(coefficient: 12_345, exponent: -3),
-      -1,
-      rounding.HalfEven,
+    decimal.round(
+      support.new(coefficient: 12_345, exponent: -3),
+      digits: 1,
+      rounding: decimal.HalfEven,
     )
   decimal.to_string(rescaled)
   |> should.equal("12.3")
@@ -818,10 +699,10 @@ pub fn rescale_truncate_test() -> Nil {
 pub fn rescale_half_even_tie_test() -> Nil {
   // 12.35 → 1 dp via HalfEven → 12.4 (tie, 3 is odd, round to even).
   let assert Ok(rescaled) =
-    decimal.rescale(
-      decimal.new(coefficient: 1235, exponent: -2),
-      -1,
-      rounding.HalfEven,
+    decimal.round(
+      support.new(coefficient: 1235, exponent: -2),
+      digits: 1,
+      rounding: decimal.HalfEven,
     )
   decimal.to_string(rescaled)
   |> should.equal("12.4")
@@ -830,91 +711,52 @@ pub fn rescale_half_even_tie_test() -> Nil {
 // --- to_int / to_int_truncated / to_int_rounded -------------------------
 
 pub fn to_int_integer_valued_test() -> Nil {
-  decimal.to_int(decimal.from_int(7))
+  decimal.to_int(support.int(7))
   |> should.equal(Ok(7))
 }
 
 pub fn to_int_trailing_zeros_succeed_test() -> Nil {
   // "12.00" → coefficient 1200, exponent -2; cleanly divisible.
-  let assert Ok(d) = decimal.from_string("12.00")
+  let assert Ok(d) = decimal.parse("12.00")
   decimal.to_int(d)
   |> should.equal(Ok(12))
 }
 
 pub fn to_int_fractional_part_rejected_test() -> Nil {
-  let assert Ok(d) = decimal.from_string("12.34")
+  let assert Ok(d) = decimal.parse("12.34")
   decimal.to_int(d)
-  |> should.equal(Error(decimal.PrecisionExceeded))
+  |> should.equal(Error(Nil))
 }
 
 pub fn to_int_negative_value_test() -> Nil {
-  let assert Ok(d) = decimal.from_string("-7")
+  let assert Ok(d) = decimal.parse("-7")
   decimal.to_int(d)
   |> should.equal(Ok(-7))
-}
-
-pub fn to_int_truncated_drops_positive_fraction_test() -> Nil {
-  let assert Ok(d) = decimal.from_string("1.9")
-  decimal.to_int_truncated(d)
-  |> should.equal(Ok(1))
-}
-
-pub fn to_int_truncated_drops_negative_fraction_test() -> Nil {
-  // Round toward zero — `-1.9` becomes `-1`, not `-2`.
-  let assert Ok(d) = decimal.from_string("-1.9")
-  decimal.to_int_truncated(d)
-  |> should.equal(Ok(-1))
-}
-
-pub fn to_int_rounded_half_even_test() -> Nil {
-  let value = decimal.new(coefficient: 25, exponent: -1)
-  decimal.to_int_rounded(d: value, mode: rounding.HalfEven)
-  |> should.equal(Ok(2))
-}
-
-pub fn to_int_rounded_half_up_test() -> Nil {
-  let value = decimal.new(coefficient: 25, exponent: -1)
-  decimal.to_int_rounded(d: value, mode: rounding.HalfUp)
-  |> should.equal(Ok(3))
-}
-
-pub fn to_int_rounded_matches_rescale_pattern_test() -> Nil {
-  // The rounded integer should match the coefficient of a manual
-  // rescale to exponent 0 with the same mode.
-  let assert Ok(d) = decimal.from_string("3.14159")
-  let assert Ok(rescaled) = decimal.rescale(d, 0, rounding.HalfEven)
-  let via_to_int =
-    decimal.to_int_rounded(d: d, mode: rounding.HalfEven)
-    |> should.be_ok
-  via_to_int |> should.equal(decimal.coefficient(rescaled))
 }
 
 // --- Compare / equal -----------------------------------------------------
 
 pub fn equal_across_representations_test() -> Nil {
-  decimal.equal(decimal.new(coefficient: 100, exponent: -2), decimal.one())
+  decimal.equal(support.new(coefficient: 100, exponent: -2), decimal.one())
   |> should.be_true
 }
 
 pub fn equal_distinct_values_test() -> Nil {
-  decimal.equal(decimal.from_int(1), decimal.from_int(2))
+  decimal.equal(support.int(1), support.int(2))
   |> should.be_false
 }
 
 pub fn compare_orders_test() -> Nil {
-  decimal.compare(decimal.from_int(1), decimal.from_int(2))
+  decimal.compare(support.int(1), support.int(2))
   |> should.equal(order.Lt)
-  decimal.compare(decimal.from_int(3), decimal.from_int(1))
+  decimal.compare(support.int(3), support.int(1))
   |> should.equal(order.Gt)
-  decimal.compare(
-    decimal.new(coefficient: 200, exponent: -2),
-    decimal.from_int(2),
-  )
+  decimal.compare(support.new(coefficient: 200, exponent: -2), support.int(2))
   |> should.equal(order.Eq)
 }
 
 pub fn compare_mixed_signs_test() -> Nil {
-  decimal.compare(decimal.from_int(-5), decimal.from_int(1))
+  decimal.compare(support.int(-5), support.int(1))
   |> should.equal(order.Lt)
 }
 
@@ -924,7 +766,7 @@ pub fn from_to_string_round_trip_test() -> Nil {
   let inputs = ["0", "1", "-1", "3.14", "-0.005", "1234.5678", "0.0"]
   inputs
   |> list_iter(fn(s) {
-    let assert Ok(parsed) = decimal.from_string(s)
+    let assert Ok(parsed) = decimal.parse(s)
     decimal.to_string(parsed)
     |> should.equal(s)
   })
@@ -938,4 +780,98 @@ fn list_iter(items: List(a), f: fn(a) -> Nil) -> Nil {
       list_iter(tail, f)
     }
   }
+}
+
+// --- Range limits ---------------------------------------------------------
+
+pub fn zero_with_a_huge_exponent_is_accepted_quickly_test() -> Nil {
+  let assert Ok(zero) = decimal.new(coefficient: 0, exponent: 1_000_000_000)
+  assert decimal.to_string(zero) == "0"
+  assert decimal.parse("0e999999999") |> result.map(decimal.is_zero) == Ok(True)
+}
+
+pub fn products_obey_the_constructor_range_test() -> Nil {
+  assert decimal.multiply(support.parse("1e15"), support.parse("1e15"))
+    == Error(decimal.PrecisionExceeded)
+  assert decimal.add(support.parse("9e15"), support.parse("1e15"))
+    == Error(decimal.PrecisionExceeded)
+  assert decimal.subtract(support.parse("-9e15"), support.parse("1e15"))
+    == Error(decimal.PrecisionExceeded)
+}
+
+pub fn rounding_up_past_the_range_fails_test() -> Nil {
+  assert decimal.round(
+      support.parse("9007199254740991"),
+      digits: -2,
+      rounding: decimal.Up,
+    )
+    == Error(decimal.PrecisionExceeded)
+}
+
+pub fn dividing_a_tiny_value_rounds_to_zero_test() -> Nil {
+  let tiny = support.parse("1e-40")
+  assert decimal.divide(
+      tiny,
+      decimal.one(),
+      digits: 0,
+      rounding: decimal.HalfEven,
+    )
+    |> result.map(decimal.to_string)
+    == Ok("0")
+  assert decimal.divide(tiny, decimal.one(), digits: 2, rounding: decimal.Up)
+    |> result.map(decimal.to_string)
+    == Ok("0.01")
+  assert decimal.divide(
+      decimal.negate(tiny),
+      decimal.one(),
+      digits: 2,
+      rounding: decimal.Floor,
+    )
+    |> result.map(decimal.to_string)
+    == Ok("-0.01")
+}
+
+pub fn far_apart_exponents_do_not_hang_test() -> Nil {
+  let tiny = support.parse("1e-1000000")
+  assert decimal.compare(tiny, decimal.one()) == order.Lt
+  assert decimal.to_int(tiny) == Error(Nil)
+  assert decimal.round(tiny, digits: 2, rounding: decimal.HalfEven)
+    |> result.map(decimal.to_string)
+    == Ok("0.00")
+  assert decimal.add(tiny, decimal.one()) == Error(decimal.PrecisionExceeded)
+}
+
+pub fn parse_trims_a_trailing_crlf_test() -> Nil {
+  assert decimal.parse("12.5\r\n") |> result.map(decimal.to_string)
+    == Ok("12.5")
+}
+
+pub fn dividing_with_an_out_of_range_divisor_scale_rounds_test() -> Nil {
+  let nine_tenths = support.parse("0.9000000000000000")
+  let half = support.parse("0.5000000000000000")
+  let one = decimal.one()
+  let to_text = result.map(_, decimal.to_string)
+  assert to_text(decimal.divide(
+      nine_tenths,
+      one,
+      digits: 0,
+      rounding: decimal.HalfEven,
+    ))
+    == Ok("1")
+  assert to_text(decimal.divide(
+      half,
+      one,
+      digits: 0,
+      rounding: decimal.HalfEven,
+    ))
+    == Ok("0")
+  assert to_text(decimal.divide(half, one, digits: 0, rounding: decimal.HalfUp))
+    == Ok("1")
+  assert to_text(decimal.divide(
+      decimal.negate(nine_tenths),
+      one,
+      digits: 0,
+      rounding: decimal.Down,
+    ))
+    == Ok("0")
 }

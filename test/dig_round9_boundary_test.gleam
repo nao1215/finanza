@@ -13,37 +13,36 @@
 //// - JPY (exponent 0) rounding direction at the 0.5-cent boundary.
 //// - Allocate with empty ratios / zero ratio / negative ratio.
 //// - rescale across wide exponent jumps.
-//// - currency.divide by zero.
+//// - money.divide by zero.
 //// - card.validate at minimum (14-digit Diners) and over-maximum
 ////   (20-digit) PAN lengths.
 
 import gleeunit/should
 
 import finanza/card
-import finanza/currency
-import finanza/currency/catalog
 import finanza/decimal
-import finanza/decimal/rounding
+import finanza/money
+import support
 
 // Exposed in the module doc as `2^53 − 1`.
 const max_safe: Int = 9_007_199_254_740_991
 
 fn d(s: String) -> decimal.Decimal {
-  let assert Ok(v) = decimal.from_string(s)
+  let assert Ok(v) = decimal.parse(s)
   v
 }
 
 // --- max_safe_coefficient cliff (decimal) -------------------------------
 
 pub fn add_max_safe_plus_zero_test() -> Nil {
-  let max = decimal.new(coefficient: max_safe, exponent: 0)
+  let max = support.new(coefficient: max_safe, exponent: 0)
   let assert Ok(sum) = decimal.add(max, decimal.zero())
   decimal.equal(sum, max)
   |> should.be_true
 }
 
 pub fn add_max_safe_plus_one_overflows_test() -> Nil {
-  let max = decimal.new(coefficient: max_safe, exponent: 0)
+  let max = support.new(coefficient: max_safe, exponent: 0)
   case decimal.add(max, decimal.one()) {
     Error(decimal.PrecisionExceeded) -> Nil
     other -> should.equal(format_arith(other), "PrecisionExceeded")
@@ -51,14 +50,14 @@ pub fn add_max_safe_plus_one_overflows_test() -> Nil {
 }
 
 pub fn add_max_safe_minus_one_plus_one_fits_test() -> Nil {
-  let almost_max = decimal.new(coefficient: max_safe - 1, exponent: 0)
+  let almost_max = support.new(coefficient: max_safe - 1, exponent: 0)
   let assert Ok(sum) = decimal.add(almost_max, decimal.one())
-  decimal.equal(sum, decimal.new(coefficient: max_safe, exponent: 0))
+  decimal.equal(sum, support.new(coefficient: max_safe, exponent: 0))
   |> should.be_true
 }
 
 pub fn subtract_neg_max_safe_minus_one_overflows_test() -> Nil {
-  let neg_max = decimal.new(coefficient: 0 - max_safe, exponent: 0)
+  let neg_max = support.new(coefficient: 0 - max_safe, exponent: 0)
   case decimal.subtract(neg_max, decimal.one()) {
     Error(decimal.PrecisionExceeded) -> Nil
     other -> should.equal(format_arith(other), "PrecisionExceeded")
@@ -66,22 +65,22 @@ pub fn subtract_neg_max_safe_minus_one_overflows_test() -> Nil {
 }
 
 pub fn multiply_max_by_one_fits_test() -> Nil {
-  let max = decimal.new(coefficient: max_safe, exponent: 0)
+  let max = support.new(coefficient: max_safe, exponent: 0)
   let assert Ok(prod) = decimal.multiply(max, decimal.one())
   decimal.equal(prod, max)
   |> should.be_true
 }
 
 pub fn multiply_max_by_two_overflows_test() -> Nil {
-  let max = decimal.new(coefficient: max_safe, exponent: 0)
-  case decimal.multiply(max, decimal.from_int(2)) {
+  let max = support.new(coefficient: max_safe, exponent: 0)
+  case decimal.multiply(max, support.int(2)) {
     Error(decimal.PrecisionExceeded) -> Nil
     other -> should.equal(format_arith(other), "PrecisionExceeded")
   }
 }
 
 pub fn negate_max_safe_stays_in_bound_test() -> Nil {
-  let max = decimal.new(coefficient: max_safe, exponent: 0)
+  let max = support.new(coefficient: max_safe, exponent: 0)
   let neg = decimal.negate(max)
   decimal.coefficient(neg)
   |> should.equal(0 - max_safe)
@@ -89,20 +88,20 @@ pub fn negate_max_safe_stays_in_bound_test() -> Nil {
 
 pub fn parser_at_max_safe_test() -> Nil {
   // Wikipedia gives 9007199254740991 as the safe integer ceiling.
-  let assert Ok(d_max) = decimal.from_string("9007199254740991")
+  let assert Ok(d_max) = decimal.parse("9007199254740991")
   decimal.coefficient(d_max)
   |> should.equal(max_safe)
 }
 
 pub fn parser_at_max_safe_plus_one_rejected_test() -> Nil {
-  case decimal.from_string("9007199254740992") {
+  case decimal.parse("9007199254740992") {
     Error(decimal.ParsedValueTooLarge) -> Nil
     other -> should.equal(format_parse(other), "ParsedValueTooLarge")
   }
 }
 
 pub fn parser_at_neg_max_safe_minus_one_rejected_test() -> Nil {
-  case decimal.from_string("-9007199254740992") {
+  case decimal.parse("-9007199254740992") {
     Error(decimal.ParsedValueTooLarge) -> Nil
     other -> should.equal(format_parse(other), "ParsedValueTooLarge")
   }
@@ -111,7 +110,7 @@ pub fn parser_at_neg_max_safe_minus_one_rejected_test() -> Nil {
 // --- Decimal at large negative exponents --------------------------------
 
 pub fn new_large_negative_exponent_arithmetic_test() -> Nil {
-  let tiny = decimal.new(coefficient: 1, exponent: -20)
+  let tiny = support.new(coefficient: 1, exponent: -20)
   let assert Ok(sum) = decimal.add(tiny, decimal.zero())
   decimal.equal(sum, tiny)
   |> should.be_true
@@ -120,9 +119,13 @@ pub fn new_large_negative_exponent_arithmetic_test() -> Nil {
 pub fn rescale_finer_then_coarser_round_trip_test() -> Nil {
   // rescale(d, -6) then rescale back to original exponent — value preserved.
   let v = d("12.34")
-  let assert Ok(finer) = decimal.rescale(v, -6, rounding.HalfEven)
+  let assert Ok(finer) = decimal.round(v, digits: 6, rounding: decimal.HalfEven)
   let assert Ok(back) =
-    decimal.rescale(finer, decimal.exponent(v), rounding.HalfEven)
+    decimal.round(
+      finer,
+      digits: -{ decimal.exponent(v) },
+      rounding: decimal.HalfEven,
+    )
   decimal.equal(back, v)
   |> should.be_true
 }
@@ -130,7 +133,8 @@ pub fn rescale_finer_then_coarser_round_trip_test() -> Nil {
 pub fn rescale_to_zero_exponent_drops_fraction_test() -> Nil {
   // rescaling 1.49 to exponent 0 with HalfEven produces 1.
   let v = d("1.49")
-  let assert Ok(rounded) = decimal.rescale(v, 0, rounding.HalfEven)
+  let assert Ok(rounded) =
+    decimal.round(v, digits: 0, rounding: decimal.HalfEven)
   decimal.to_string(rounded)
   |> should.equal("1")
 }
@@ -139,37 +143,37 @@ pub fn rescale_to_zero_exponent_drops_fraction_test() -> Nil {
 
 pub fn jpy_to_minor_half_even_at_half_test() -> Nil {
   // 0.5 JPY → HalfEven → 0 (even).
-  let m = currency.new_money(d("0.5"), catalog.jpy())
-  let assert Ok(units) = currency.to_minor(m, rounding.HalfEven)
+  let m = money.Money(d("0.5"), money.jpy)
+  let assert Ok(units) = money.to_minor(m, decimal.HalfEven)
   units
   |> should.equal(0)
 }
 
 pub fn jpy_to_minor_half_even_1_5_test() -> Nil {
   // 1.5 JPY → HalfEven → 2 (next even).
-  let m = currency.new_money(d("1.5"), catalog.jpy())
-  let assert Ok(units) = currency.to_minor(m, rounding.HalfEven)
+  let m = money.Money(d("1.5"), money.jpy)
+  let assert Ok(units) = money.to_minor(m, decimal.HalfEven)
   units
   |> should.equal(2)
 }
 
 pub fn jpy_to_minor_half_up_at_half_test() -> Nil {
-  let m = currency.new_money(d("0.5"), catalog.jpy())
-  let assert Ok(units) = currency.to_minor(m, rounding.HalfUp)
+  let m = money.Money(d("0.5"), money.jpy)
+  let assert Ok(units) = money.to_minor(m, decimal.HalfUp)
   units
   |> should.equal(1)
 }
 
 pub fn jpy_to_minor_negative_half_floor_test() -> Nil {
-  let m = currency.new_money(d("-0.5"), catalog.jpy())
-  let assert Ok(units) = currency.to_minor(m, rounding.Floor)
+  let m = money.Money(d("-0.5"), money.jpy)
+  let assert Ok(units) = money.to_minor(m, decimal.Floor)
   units
   |> should.equal(-1)
 }
 
 pub fn jpy_to_minor_negative_half_ceiling_test() -> Nil {
-  let m = currency.new_money(d("-0.5"), catalog.jpy())
-  let assert Ok(units) = currency.to_minor(m, rounding.Ceiling)
+  let m = money.Money(d("-0.5"), money.jpy)
+  let assert Ok(units) = money.to_minor(m, decimal.Ceiling)
   units
   |> should.equal(0)
 }
@@ -178,15 +182,10 @@ pub fn jpy_to_minor_negative_half_ceiling_test() -> Nil {
 
 pub fn high_precision_currency_from_to_minor_test() -> Nil {
   // Build an 8-decimal-place currency (e.g. crypto smallest unit).
-  let assert Ok(btc) =
-    currency.new_currency(
-      code: "BTC",
-      exponent: 8,
-      symbol: "₿",
-      name: "Bitcoin",
-    )
-  let m = currency.from_minor(123_456_789, btc)
-  let assert Ok(back) = currency.to_minor(m, rounding.HalfEven)
+  let btc =
+    money.Currency(code: "BTC", exponent: 8, symbol: "₿", name: "Bitcoin")
+  let m = support.from_minor(123_456_789, btc)
+  let assert Ok(back) = money.to_minor(m, decimal.HalfEven)
   back
   |> should.equal(123_456_789)
 }
@@ -194,9 +193,9 @@ pub fn high_precision_currency_from_to_minor_test() -> Nil {
 // --- Allocate edges round 1 missed --------------------------------------
 
 pub fn allocate_empty_ratios_errors_test() -> Nil {
-  let m = currency.from_minor(1000, catalog.usd())
-  case currency.allocate(m, []) {
-    Error(currency.EmptyRatios) -> Nil
+  let m = support.from_minor(1000, money.usd)
+  case money.allocate(m, []) {
+    Error(money.EmptyRatios) -> Nil
     other -> should.equal(format_currency(other), "EmptyRatios")
   }
 }
@@ -206,27 +205,27 @@ pub fn allocate_with_all_zero_ratios_errors_test() -> Nil {
   // failure; #49 relaxed that to "skip recipient" semantics. The
   // boundary now sits at the all-zero list, which still has no
   // positive total to distribute and remains rejected.
-  let m = currency.from_minor(1000, catalog.usd())
-  case currency.allocate(m, [0, 0, 0]) {
-    Error(currency.NonPositiveRatio) -> Nil
+  let m = support.from_minor(1000, money.usd)
+  case money.allocate(m, [0, 0, 0]) {
+    Error(money.NonPositiveRatio) -> Nil
     other -> should.equal(format_currency(other), "NonPositiveRatio")
   }
 }
 
 pub fn allocate_with_negative_ratio_errors_test() -> Nil {
-  let m = currency.from_minor(1000, catalog.usd())
-  case currency.allocate(m, [1, -1, 1]) {
-    Error(currency.NonPositiveRatio) -> Nil
+  let m = support.from_minor(1000, money.usd)
+  case money.allocate(m, [1, -1, 1]) {
+    Error(money.NonPositiveRatio) -> Nil
     other -> should.equal(format_currency(other), "NonPositiveRatio")
   }
 }
 
-// --- currency.divide by zero --------------------------------------------
+// --- money.divide by zero --------------------------------------------
 
 pub fn money_divide_by_zero_errors_test() -> Nil {
-  let m = currency.from_minor(1000, catalog.usd())
-  case currency.divide(m, decimal.zero(), rounding.HalfEven) {
-    Error(currency.ArithmeticError(decimal.DivisionByZero)) -> Nil
+  let m = support.from_minor(1000, money.usd)
+  case money.divide(m, decimal.zero(), decimal.HalfEven) {
+    Error(money.ArithmeticFailed(decimal.DivisionByZero)) -> Nil
     other ->
       should.equal(format_currency(other), "ArithmeticError DivisionByZero")
   }
@@ -235,19 +234,19 @@ pub fn money_divide_by_zero_errors_test() -> Nil {
 // --- Currency mismatch in compound ops ----------------------------------
 
 pub fn money_add_currency_mismatch_test() -> Nil {
-  let usd_money = currency.from_minor(100, catalog.usd())
-  let jpy_money = currency.from_minor(100, catalog.jpy())
-  case currency.add(usd_money, jpy_money) {
-    Error(currency.CurrencyMismatch(_, _)) -> Nil
+  let usd_money = support.from_minor(100, money.usd)
+  let jpy_money = support.from_minor(100, money.jpy)
+  case money.add(usd_money, jpy_money) {
+    Error(money.CurrencyMismatch(_, _)) -> Nil
     other -> should.equal(format_currency(other), "CurrencyMismatch")
   }
 }
 
 pub fn money_compare_currency_mismatch_test() -> Nil {
-  let usd_money = currency.from_minor(100, catalog.usd())
-  let eur_money = currency.from_minor(100, catalog.eur())
-  case currency.compare(usd_money, eur_money) {
-    Error(currency.CurrencyMismatch(_, _)) -> Nil
+  let usd_money = support.from_minor(100, money.usd)
+  let eur_money = support.from_minor(100, money.eur)
+  case money.compare(usd_money, eur_money) {
+    Error(money.CurrencyMismatch(_, _)) -> Nil
     Error(_) -> should.be_true(False)
     Ok(_) -> should.be_true(False)
   }
@@ -309,18 +308,15 @@ fn format_parse(r: Result(decimal.Decimal, decimal.ParseError)) -> String {
   }
 }
 
-fn format_currency(r: Result(a, currency.CurrencyError)) -> String {
+fn format_currency(r: Result(a, money.MoneyError)) -> String {
   case r {
     Ok(_) -> "Ok"
-    Error(currency.CurrencyMismatch(_, _)) -> "CurrencyMismatch"
-    Error(currency.InvalidExponent) -> "InvalidExponent"
-    Error(currency.InvalidCurrencyCode) -> "InvalidCurrencyCode"
-    Error(currency.EmptyRatios) -> "EmptyRatios"
-    Error(currency.NonPositiveRatio) -> "NonPositiveRatio"
-    Error(currency.EmptyList) -> "EmptyList"
-    Error(currency.ArithmeticError(decimal.DivisionByZero)) ->
+    Error(money.CurrencyMismatch(_, _)) -> "CurrencyMismatch"
+    Error(money.EmptyRatios) -> "EmptyRatios"
+    Error(money.NonPositiveRatio) -> "NonPositiveRatio"
+    Error(money.ArithmeticFailed(decimal.DivisionByZero)) ->
       "ArithmeticError DivisionByZero"
-    Error(currency.ArithmeticError(decimal.PrecisionExceeded)) ->
+    Error(money.ArithmeticFailed(decimal.PrecisionExceeded)) ->
       "ArithmeticError PrecisionExceeded"
   }
 }

@@ -1,24 +1,13 @@
-//// Fixed-point decimal arithmetic with explicit rounding.
+//// Fixed-point decimal numbers with explicit rounding.
 ////
-//// A [`Decimal`](#Decimal) is represented internally as a signed
-//// integer `coefficient` and an `exponent`:
+//// A `Decimal` is a coefficient and a base-10 exponent, so `12.30` is
+//// the coefficient `1230` with the exponent `-2`. Operations that can
+//// lose digits take a `RoundingMode`.
 ////
-//// ```text
-//// value = coefficient × 10^exponent
-//// ```
-////
-//// `Decimal` is `pub opaque`; construct values through [`from_int`](#from_int),
-//// [`from_string`](#from_string), or [`new`](#new), and inspect them through
-//// [`coefficient`](#coefficient) and [`exponent`](#exponent).
-////
-//// ## Precision boundary
-////
-//// On the JavaScript target, Gleam's `Int` is a 64-bit IEEE 754 number,
-//// so coefficients are limited to ±(2^53 − 1) = 9_007_199_254_740_991.
-//// Operations that would produce a larger coefficient return
-//// [`PrecisionExceeded`](#ArithmeticError). On the Erlang target,
-//// integers are arbitrary precision; the same bound is enforced anyway
-//// so behaviour is consistent across targets.
+//// The coefficient, and the integer a positive exponent stands for,
+//// stay within ±9,007,199,254,740,991 (2^53 − 1) on both targets, so
+//// results are the same on Erlang and JavaScript. Results outside
+//// that range are `PrecisionExceeded` errors.
 
 import gleam/bool
 import gleam/float
@@ -28,309 +17,149 @@ import gleam/order
 import gleam/result
 import gleam/string
 
-import finanza/decimal/rounding
-
-/// Fixed-point decimal value. Construct via [`from_int`](#from_int),
-/// [`from_string`](#from_string), or [`new`](#new).
+/// A fixed-point decimal number.
+///
 pub opaque type Decimal {
+  // |coefficient| <= max_safe_coefficient, and when exponent > 0 the
+  // rendered integer |coefficient| * 10^exponent is within it too.
   Decimal(coefficient: Int, exponent: Int)
 }
 
-/// Errors returned by [`from_string`](#from_string).
+/// How to round when an operation drops digits.
+///
+/// `HalfEven` (banker's rounding) is the usual choice for money.
+///
+pub type RoundingMode {
+  /// Round half-way values to the even neighbour: 2.5 to 2, 3.5 to 4.
+  HalfEven
+  /// Round half-way values away from zero: 2.5 to 3, -2.5 to -3.
+  HalfUp
+  /// Round half-way values toward zero: 2.5 to 2, -2.5 to -2.
+  HalfDown
+  /// Round away from zero: 2.1 to 3, -2.1 to -3.
+  Up
+  /// Round toward zero: 2.9 to 2, -2.9 to -2.
+  Down
+  /// Round toward positive infinity: 2.1 to 3, -2.9 to -2.
+  Ceiling
+  /// Round toward negative infinity: 2.9 to 2, -2.1 to -3.
+  Floor
+}
+
+/// Why `parse` rejected its input.
+///
 pub type ParseError {
-  /// The input was the empty string or contained only whitespace.
+  /// The input was empty or only whitespace.
   EmptyInput
-  /// The input contained a character that is not a digit, sign, or
-  /// decimal point.
-  InvalidCharacter(char: String, position: Int)
-  /// The input contained more than one decimal point.
+  /// The input has a character that is not a digit, a sign, a `.` or
+  /// an exponent marker. `position` counts graphemes from 0 after the
+  /// surrounding whitespace is trimmed.
+  InvalidCharacter(character: String, position: Int)
+  /// The input has more than one `.`.
   MultipleDecimalPoints
-  /// The input contained more than one sign character.
+  /// The input has more than one sign, or a sign after the first
+  /// character.
   MultipleSigns
-  /// The input contained no digits (e.g. `"+"`, `"."`, `"-."`).
+  /// The input has no digits, such as `"+"` or `"."`.
   NoDigits
-  /// The parsed coefficient would exceed `±9_007_199_254_740_991`
-  /// (the JavaScript-safe integer ceiling). Such a value cannot be
-  /// represented faithfully on the JavaScript target; rather than
-  /// silently corrupt it (and emit unparseable strings from
-  /// [`to_string`](#to_string)), parsing fails fast.
+  /// The value is outside the supported range.
   ParsedValueTooLarge
 }
 
-/// Errors returned by arithmetic operations.
+/// Why an arithmetic operation failed.
+///
 pub type ArithmeticError {
-  /// The right-hand operand of a [`divide`](#divide) was zero.
+  /// The divisor was zero.
   DivisionByZero
-  /// The result would not fit in the supported precision window
-  /// (±9_007_199_254_740_991). Reduce intermediate precision with
-  /// [`round`](#round) and retry.
+  /// The result does not fit in the supported range.
   PrecisionExceeded
 }
 
-/// Errors returned by [`format_checked`](#format_checked) when the
-/// thousands or decimal separator arguments would produce an
-/// ambiguous or un-parseable rendering.
-pub type FormatError {
-  /// A separator argument has more than one grapheme. The
-  /// `field` is either `"thousands"` or `"decimal"`; `value` is
-  /// the offending input echoed back so the caller can route
-  /// the failure to its locale layer.
-  MultiCharSeparator(field: String, value: String)
-  /// The `thousands` and `decimal_separator` arguments are equal
-  /// (and non-empty). The rendered output would contain the same
-  /// character at every separator position and parsers could not
-  /// disambiguate the integer / fractional split.
-  SeparatorsCollide(value: String)
-  /// The `decimal_separator` argument is the empty string. The
-  /// rendered output would lose the integer / fractional split
-  /// entirely (`"1234.5"` would format as `"1234,5"`).
-  EmptyDecimalSeparator
-}
-
-/// Errors returned by validated constructors
-/// ([`try_new`](#try_new), [`try_from_int`](#try_from_int)).
-pub type ConstructError {
-  /// The supplied coefficient — or the value implied once the
-  /// exponent is applied (`|coefficient| × 10^exponent` for
-  /// `exponent ≥ 0`) — would exceed `±9_007_199_254_740_991`
-  /// (the JavaScript-safe integer ceiling). Such a value cannot
-  /// round-trip through [`to_string`](#to_string) and
-  /// [`from_string`](#from_string), so construction fails fast
-  /// rather than producing a `Decimal` the library cannot read
-  /// back.
-  CoefficientTooLarge
-}
-
-/// 2^53 − 1. The largest absolute coefficient that remains exact on
-/// JavaScript's `Number` representation. The Erlang target tolerates
-/// larger values, but this bound is enforced everywhere so behaviour
-/// matches across targets.
 const max_safe_coefficient: Int = 9_007_199_254_740_991
 
-/// Upper bound on `digits` arguments to [`divide`](#divide) (and the
-/// other operations that scale by `10^digits`) when both operands are
-/// unit-magnitude. `max_safe_coefficient` is ≈ 9 × 10^15, so
-/// `10^16 > max_safe_coefficient` and division to 16 fractional
-/// digits already exceeds the safe range even for `1/1`. Larger
-/// operands shrink the practical headroom further; treat
-/// `max_safe_digits` as the **best case** ceiling, not a guarantee.
-/// For any specific division, the safe `digits` value is bounded by
-/// `floor(log10(max_safe_coefficient / abs(a.coefficient)))` plus
-/// `b.exponent − a.exponent`. Callers that need more precision should
-/// reach for a dedicated arbitrary-precision library (e.g. Python
-/// `decimal` with `prec=50+`).
-pub const max_safe_digits: Int = 15
+// Construction ---------------------------------------------------------------
 
-// --- Constructors --------------------------------------------------------
-
-/// The decimal value 0.
+/// Returns the decimal 0.
+///
 pub fn zero() -> Decimal {
   Decimal(0, 0)
 }
 
-/// The decimal value 1.
+/// Returns the decimal 1.
+///
 pub fn one() -> Decimal {
   Decimal(1, 0)
 }
 
-/// Build a `Decimal` from an integer.
+/// Creates the decimal `coefficient × 10^exponent`.
 ///
-/// Panics if `|n| > 9_007_199_254_740_991` (such a coefficient
-/// cannot round-trip through [`to_string`](#to_string) and
-/// [`from_string`](#from_string)). Use [`try_from_int`](#try_from_int)
-/// when the input is supplied by a caller and might exceed the
-/// safe range — that variant returns a `Result` instead of
-/// panicking.
-pub fn from_int(n n: Int) -> Decimal {
-  let assert Ok(d) = try_from_int(n: n)
-  d
-}
-
-/// Build a `Decimal` from an integer, returning a `Result`.
+/// Returns `Error(Nil)` when the value is outside the supported range.
 ///
-/// Returns `Error(CoefficientTooLarge)` when
-/// `|n| > 9_007_199_254_740_991`, which is the threshold above
-/// which the resulting `Decimal` cannot round-trip through
-/// [`to_string`](#to_string) and [`from_string`](#from_string).
-pub fn try_from_int(n n: Int) -> Result(Decimal, ConstructError) {
-  use <- bool.guard(
-    when: int.absolute_value(n) > max_safe_coefficient,
-    return: Error(CoefficientTooLarge),
-  )
-  Ok(Decimal(n, 0))
-}
-
-/// Build a `Decimal` from a `Float`.
-///
-/// The conversion goes through `float.to_string |> from_string`,
-/// which means the resulting `Decimal` matches Gleam's textual
-/// rendering of the float. That rendering is the same one
-/// `gleam_stdlib` uses for `string.inspect(value)` and is generally
-/// the "shortest IEEE-754 round-trip" form on both targets — so
-/// inputs like `0.5` and `3.14` survive intact, while pathological
-/// floats (`0.1 +. 0.2` → `0.30000000000000004`) carry their full
-/// double expansion into the resulting `Decimal`.
-///
-/// Returns the same `ParseError` variants `from_string` does so a
-/// runtime float that for any reason cannot be parsed (NaN /
-/// Infinity surface as non-numeric strings on Erlang) propagates as
-/// `Error(_)` rather than panicking.
-///
-/// Use this when the input genuinely is a `Float` (exchange-rate
-/// APIs, telemetry); prefer `from_string` or `try_new` when the
-/// caller already holds a textual or coefficient-and-exponent
-/// representation, since those skip the float round-trip and stay
-/// target-portable.
-pub fn from_float(value value: Float) -> Result(Decimal, ParseError) {
-  value
-  |> float.to_string
-  |> from_string
-}
-
-/// Build a `Decimal` directly from a coefficient and exponent.
-///
-/// `new(coefficient: 1234, exponent: -2)` represents `12.34`.
-///
-/// Panics on either of the two overflow paths:
-///
-/// - `|coefficient| > 9_007_199_254_740_991` — the coefficient
-///   itself exceeds the JS-safe integer ceiling.
-/// - `exponent > 0` and `|coefficient| × 10^exponent > 9_007_199_254_740_991`
-///   — the coefficient is safe but the implied rendered value
-///   (the integer that `to_string` would emit) is not.
-///
-/// The panic message distinguishes the two paths so a debugging
-/// caller can tell whether to shrink the coefficient or shrink the
-/// exponent.
-///
-/// Use [`try_new`](#try_new) when the inputs are supplied by a
-/// caller and might exceed the safe range — that variant returns
-/// a `Result` instead of panicking.
-pub fn new(coefficient coefficient: Int, exponent exponent: Int) -> Decimal {
-  case try_new(coefficient: coefficient, exponent: exponent) {
-    Ok(d) -> d
-    Error(CoefficientTooLarge) ->
-      panic as new_overflow_message(coefficient:, exponent:)
-  }
-}
-
-/// Build the panic message for `new` when `try_new` returns
-/// `CoefficientTooLarge`. Re-examines the inputs to distinguish
-/// the two overflow paths so the message points the caller at the
-/// right thing to shrink (coefficient vs exponent).
-///
-/// Exposed as `@internal` for the test suite; not part of the
-/// public API.
-@internal
-pub fn new_overflow_message(
-  coefficient coefficient: Int,
-  exponent exponent: Int,
-) -> String {
-  let abs = int.absolute_value(coefficient)
-  case abs > max_safe_coefficient {
-    True ->
-      "finanza/decimal.new: coefficient "
-      <> int.to_string(coefficient)
-      <> " (exponent "
-      <> int.to_string(exponent)
-      <> ") exceeds the JS-safe range (|coefficient| > "
-      <> int.to_string(max_safe_coefficient)
-      <> "); use decimal.try_new for inputs that might exceed this bound"
-    False ->
-      "finanza/decimal.new: rendered value |coefficient| × 10^exponent (= "
-      <> int.to_string(abs)
-      <> " × 10^"
-      <> int.to_string(exponent)
-      <> ") exceeds the JS-safe range (> "
-      <> int.to_string(max_safe_coefficient)
-      <> "); use decimal.try_new for inputs that might exceed this bound"
-  }
-}
-
-/// Build a `Decimal` from a coefficient and exponent, returning a
-/// `Result`.
-///
-/// Returns `Error(CoefficientTooLarge)` when the rendered value
-/// would overflow the safe range — either because
-/// `|coefficient| > 9_007_199_254_740_991`, or because a positive
-/// `exponent` would push the rendered integer
-/// (`|coefficient| × 10^exponent`) past that bound. Such a value
-/// cannot round-trip through [`to_string`](#to_string) and
-/// [`from_string`](#from_string).
-pub fn try_new(
-  coefficient coefficient: Int,
-  exponent exponent: Int,
-) -> Result(Decimal, ConstructError) {
-  let abs = int.absolute_value(coefficient)
-  use <- bool.guard(
-    when: abs > max_safe_coefficient,
-    return: Error(CoefficientTooLarge),
-  )
-  case exponent > 0 {
-    True ->
-      case rendered_fits(abs: abs, zeros_remaining: exponent) {
-        True -> Ok(Decimal(coefficient, exponent))
-        False -> Error(CoefficientTooLarge)
-      }
-    False -> Ok(Decimal(coefficient, exponent))
-  }
-}
-
-fn rendered_fits(abs abs: Int, zeros_remaining zeros_remaining: Int) -> Bool {
-  case zeros_remaining {
-    0 -> abs <= max_safe_coefficient
-    _ -> {
-      use <- bool.guard(when: abs > max_safe_coefficient, return: False)
-      rendered_fits(abs: abs * 10, zeros_remaining: zeros_remaining - 1)
-    }
-  }
-}
-
-/// Parse a decimal from a string. Accepts an optional leading `+` or
-/// `-`, decimal digits, and at most one `.` separator. Scientific
-/// notation (`1e10`, `1.5E+2`, `1e-10`) is also accepted: the mantissa
-/// is parsed by the same rules and the trailing `[eE][+-]?digits`
-/// shifts the resulting `Decimal`'s exponent. This matches
-/// `dataprep/parse.float`'s convention so values produced by `Float`
-/// → `String` round-trips on either target flow into `decimal`
-/// without an intermediate `string.replace` step.
+/// ## Examples
 ///
 /// ```gleam
-/// from_string("3.14")    // Ok(Decimal with coefficient=314, exponent=-2)
-/// from_string("-0.5")    // Ok(Decimal with coefficient=-5, exponent=-1)
-/// from_string("1e10")    // Ok(Decimal with coefficient=1, exponent=10)
-/// from_string("1.5e+2")  // Ok(Decimal with coefficient=15, exponent=1)
-/// from_string("1e-10")   // Ok(Decimal with coefficient=1, exponent=-10)
-/// from_string("")        // Error(EmptyInput)
-/// from_string("1.2.3")   // Error(MultipleDecimalPoints)
+/// decimal.new(coefficient: 1234, exponent: -2) |> result.map(decimal.to_string)
+/// // -> Ok("12.34")
 /// ```
 ///
-/// **Whitespace.** Leading and trailing *Unicode* whitespace is trimmed
-/// before parsing — not only ASCII space / tab / newline but also
-/// NO-BREAK SPACE (U+00A0), NARROW NO-BREAK SPACE (U+202F), IDEOGRAPHIC
-/// SPACE (U+3000), the en/em-space family (U+2000–U+200A), and the line /
-/// paragraph separators (U+2028 / U+2029). This matches the Unicode
-/// `White_Space` property, so values copied from web pages, locale
-/// currency formatting, or CSV / Excel exports parse without the caller
-/// pre-cleaning them. Whitespace *between* digits is still rejected (e.g.
-/// `"1 . 5"` and `"1\u{00a0}5"` both fail) — trimming is at the ends only.
-pub fn from_string(input input: String) -> Result(Decimal, ParseError) {
-  let trimmed = trim_unicode_whitespace(input)
-  use <- bool.guard(when: trimmed == "", return: Error(EmptyInput))
-  case split_scientific_notation(trimmed) {
-    Ok(#(mantissa, exponent_shift)) -> {
-      use base <- result.try(parse_plain_decimal(mantissa))
-      shift_exponent(base, exponent_shift)
-    }
-    Error(parse_error) -> Error(parse_error)
-  }
+/// ```gleam
+/// decimal.new(coefficient: 1, exponent: 16)
+/// // -> Error(Nil)
+/// ```
+///
+pub fn new(
+  coefficient coefficient: Int,
+  exponent exponent: Int,
+) -> Result(Decimal, Nil) {
+  checked(coefficient, exponent) |> result.replace_error(Nil)
 }
 
-/// Trim leading and trailing Unicode whitespace. `string.trim` only
-/// removes ASCII whitespace on the targets finanza supports, which
-/// surprised callers feeding it text that legitimately carries NBSP and
-/// other Unicode spaces; this strips the full Unicode `White_Space` set
-/// from both ends explicitly so the behaviour is identical across targets.
+/// Creates a decimal from an integer.
+///
+/// Returns `Error(Nil)` when the integer is outside
+/// ±9,007,199,254,740,991.
+///
+pub fn from_int(value: Int) -> Result(Decimal, Nil) {
+  new(coefficient: value, exponent: 0)
+}
+
+/// Creates a decimal from the text `float.to_string` gives for a float.
+///
+/// `0.5` becomes `0.5`, and `0.1 +. 0.2` becomes
+/// `0.30000000000000004`. Prefer `parse` or `new` when the value is
+/// not already a float.
+///
+pub fn from_float(value: Float) -> Result(Decimal, ParseError) {
+  value |> float.to_string |> parse
+}
+
+/// Parses a decimal such as `"12.30"`, `"-0.5"`, `"+7"` or `"1.5e-3"`.
+///
+/// Leading and trailing Unicode whitespace is ignored, including
+/// no-break spaces. The exponent is kept, so `"12.30"` and `"12.3"`
+/// parse to different representations of the same number.
+///
+/// ## Examples
+///
+/// ```gleam
+/// decimal.parse(" 12.30 ") |> result.map(decimal.to_string)
+/// // -> Ok("12.30")
+/// ```
+///
+/// ```gleam
+/// decimal.parse("1.2.3")
+/// // -> Error(decimal.MultipleDecimalPoints)
+/// ```
+///
+pub fn parse(input: String) -> Result(Decimal, ParseError) {
+  let trimmed = trim_unicode_whitespace(input)
+  use <- bool.guard(when: trimmed == "", return: Error(EmptyInput))
+  use #(mantissa, shift) <- result.try(split_scientific_notation(trimmed))
+  use base <- result.try(parse_plain_decimal(mantissa))
+  checked(base.coefficient, base.exponent + shift)
+  |> result.replace_error(ParsedValueTooLarge)
+}
+
 fn trim_unicode_whitespace(input: String) -> String {
   input
   |> string.to_graphemes
@@ -338,18 +167,17 @@ fn trim_unicode_whitespace(input: String) -> String {
   |> list.reverse
   |> list.drop_while(is_unicode_whitespace)
   |> list.reverse
-  |> string.join("")
+  |> string.concat
 }
 
-/// `True` for a single grapheme that is a Unicode whitespace code point
-/// (the `White_Space` property, plus the BOM / ZERO WIDTH NO-BREAK SPACE
-/// `U+FEFF` that commonly prefixes exported files).
+// The Unicode White_Space property, plus the byte order mark.
 fn is_unicode_whitespace(grapheme: String) -> Bool {
   case grapheme {
     " "
     | "\t"
     | "\n"
     | "\r"
+    | "\r\n"
     | "\f"
     | "\u{000B}"
     | "\u{0085}"
@@ -376,65 +204,40 @@ fn is_unicode_whitespace(grapheme: String) -> Bool {
   }
 }
 
-/// Split a trimmed input on the first scientific-notation marker
-/// (`e` or `E`). Returns `#(mantissa, exponent_shift)` where
-/// `exponent_shift` is `0` when no marker is present. Returns
-/// `Error` for malformed exponent parts (empty, non-numeric,
-/// stray sign without digits).
 fn split_scientific_notation(
   trimmed: String,
 ) -> Result(#(String, Int), ParseError) {
   case find_exponent_marker(trimmed) {
     Error(Nil) -> Ok(#(trimmed, 0))
-    Ok(#(mantissa, marker, exponent_str, marker_position)) ->
-      case
-        parse_exponent_part(
-          exponent_str: exponent_str,
-          start_position: marker_position + 1,
-          marker: marker,
-        )
-      {
+    Ok(#(mantissa, marker, exponent_text)) ->
+      case int.parse(exponent_text) {
         Ok(shift) -> Ok(#(mantissa, shift))
-        Error(parse_error) -> Error(parse_error)
+        Error(Nil) ->
+          Error(InvalidCharacter(
+            character: marker,
+            position: string.length(mantissa),
+          ))
       }
   }
 }
 
 fn find_exponent_marker(
   trimmed: String,
-) -> Result(#(String, String, String, Int), Nil) {
+) -> Result(#(String, String, String), Nil) {
   case string.split_once(trimmed, on: "e") {
-    Ok(#(mantissa, exponent_str)) ->
-      Ok(#(mantissa, "e", exponent_str, string.length(mantissa)))
+    Ok(#(mantissa, exponent_text)) -> Ok(#(mantissa, "e", exponent_text))
     Error(Nil) ->
       case string.split_once(trimmed, on: "E") {
-        Ok(#(mantissa, exponent_str)) ->
-          Ok(#(mantissa, "E", exponent_str, string.length(mantissa)))
+        Ok(#(mantissa, exponent_text)) -> Ok(#(mantissa, "E", exponent_text))
         Error(Nil) -> Error(Nil)
-      }
-  }
-}
-
-fn parse_exponent_part(
-  exponent_str exponent_str: String,
-  start_position start_position: Int,
-  marker marker: String,
-) -> Result(Int, ParseError) {
-  case exponent_str {
-    "" -> Error(InvalidCharacter(char: marker, position: start_position - 1))
-    _ ->
-      case int.parse(exponent_str) {
-        Ok(n) -> Ok(n)
-        Error(Nil) ->
-          Error(InvalidCharacter(char: marker, position: start_position - 1))
       }
   }
 }
 
 fn parse_plain_decimal(mantissa: String) -> Result(Decimal, ParseError) {
   use <- bool.guard(when: mantissa == "", return: Error(EmptyInput))
-  parse_loop(state: ParseState(
-    chars: string.to_graphemes(mantissa),
+  parse_loop(ParseState(
+    characters: string.to_graphemes(mantissa),
     position: 0,
     sign: 1,
     digits: 0,
@@ -445,17 +248,9 @@ fn parse_plain_decimal(mantissa: String) -> Result(Decimal, ParseError) {
   ))
 }
 
-fn shift_exponent(base: Decimal, shift: Int) -> Result(Decimal, ParseError) {
-  let new_exponent = base.exponent + shift
-  case try_new(coefficient: base.coefficient, exponent: new_exponent) {
-    Ok(d) -> Ok(d)
-    Error(CoefficientTooLarge) -> Error(ParsedValueTooLarge)
-  }
-}
-
 type ParseState {
   ParseState(
-    chars: List(String),
+    characters: List(String),
     position: Int,
     sign: Int,
     digits: Int,
@@ -466,771 +261,522 @@ type ParseState {
   )
 }
 
-fn parse_loop(state state: ParseState) -> Result(Decimal, ParseError) {
-  case state.chars {
-    [] -> finalize_parse(state)
-    [head, ..tail] -> parse_step(state: state, char: head, rest: tail)
-  }
-}
-
-fn finalize_parse(state: ParseState) -> Result(Decimal, ParseError) {
-  use <- bool.guard(when: !state.saw_digit, return: Error(NoDigits))
-  use <- bool.guard(
-    when: int.absolute_value(state.digits) > max_safe_coefficient,
-    return: Error(ParsedValueTooLarge),
-  )
-  Ok(Decimal(state.sign * state.digits, -state.fraction_digits))
-}
-
-fn parse_step(
-  state state: ParseState,
-  char char: String,
-  rest rest: List(String),
-) -> Result(Decimal, ParseError) {
-  case classify(char) {
-    SignChar(value) -> handle_sign(state: state, value: value, rest: rest)
-    DotChar -> handle_dot(state: state, rest: rest)
-    DigitChar(value) -> handle_digit(state: state, value: value, rest: rest)
-    OtherChar -> Error(InvalidCharacter(char: char, position: state.position))
-  }
-}
-
-type CharKind {
-  SignChar(value: Int)
-  DotChar
-  DigitChar(value: Int)
-  OtherChar
-}
-
-fn classify(char: String) -> CharKind {
-  case char {
-    "+" -> SignChar(1)
-    "-" -> SignChar(-1)
-    "." -> DotChar
-    "0" -> DigitChar(0)
-    "1" -> DigitChar(1)
-    "2" -> DigitChar(2)
-    "3" -> DigitChar(3)
-    "4" -> DigitChar(4)
-    "5" -> DigitChar(5)
-    "6" -> DigitChar(6)
-    "7" -> DigitChar(7)
-    "8" -> DigitChar(8)
-    "9" -> DigitChar(9)
-    _ -> OtherChar
-  }
-}
-
-fn handle_sign(
-  state state: ParseState,
-  value value: Int,
-  rest rest: List(String),
-) -> Result(Decimal, ParseError) {
-  use <- bool.guard(
-    when: state.position != 0 || state.saw_sign,
-    return: Error(MultipleSigns),
-  )
-  parse_loop(
-    state: ParseState(
-      ..state,
-      chars: rest,
-      position: state.position + 1,
-      sign: value,
-      saw_sign: True,
-    ),
-  )
-}
-
-fn handle_dot(
-  state state: ParseState,
-  rest rest: List(String),
-) -> Result(Decimal, ParseError) {
-  use <- bool.guard(when: state.saw_dot, return: Error(MultipleDecimalPoints))
-  parse_loop(
-    state: ParseState(
-      ..state,
-      chars: rest,
-      position: state.position + 1,
-      saw_dot: True,
-    ),
-  )
-}
-
-fn handle_digit(
-  state state: ParseState,
-  value value: Int,
-  rest rest: List(String),
-) -> Result(Decimal, ParseError) {
-  let new_fraction = case state.saw_dot {
-    True -> state.fraction_digits + 1
-    False -> state.fraction_digits
-  }
-  parse_loop(
-    state: ParseState(
-      ..state,
-      chars: rest,
-      position: state.position + 1,
-      digits: state.digits * 10 + value,
-      fraction_digits: new_fraction,
-      saw_digit: True,
-    ),
-  )
-}
-
-// --- Accessors -----------------------------------------------------------
-
-/// The signed coefficient component.
-pub fn coefficient(d d: Decimal) -> Int {
-  d.coefficient
-}
-
-/// The exponent component (base 10).
-pub fn exponent(d d: Decimal) -> Int {
-  d.exponent
-}
-
-/// Convert to a plain integer.
-///
-/// Succeeds only when `d` is *exactly* integer-valued — no fractional
-/// part *and* the resulting integer fits within
-/// `±max_safe_coefficient`. Both a non-zero fractional remainder and a
-/// coefficient overflow produce `PrecisionExceeded`. Use
-/// [`to_int_truncated`](#to_int_truncated) when the fractional part
-/// should be dropped toward zero, or
-/// [`to_int_rounded`](#to_int_rounded) when it should be rounded using
-/// a specific [`rounding.Mode`](decimal/rounding.html#Mode).
-///
-/// ```gleam
-/// to_int(from_int(7))                 // Ok(7)
-/// let assert Ok(d) = from_string("12.34")
-/// to_int(d)                           // Error(PrecisionExceeded)
-/// let assert Ok(d) = from_string("12.00")
-/// to_int(d)                           // Ok(12)
-/// ```
-pub fn to_int(d d: Decimal) -> Result(Int, ArithmeticError) {
-  case int.compare(d.exponent, 0) {
-    order.Eq -> Ok(d.coefficient)
-    order.Gt -> scale_up(d.coefficient, d.exponent)
-    order.Lt -> {
-      let divisor = pow_10(-d.exponent)
-      let abs_c = int.absolute_value(d.coefficient)
-      let remainder = abs_c - abs_c / divisor * divisor
-      case remainder {
-        0 -> Ok(d.coefficient / divisor)
-        _ -> Error(PrecisionExceeded)
+fn parse_loop(state: ParseState) -> Result(Decimal, ParseError) {
+  case state.characters {
+    [] -> finish_parse(state)
+    [character, ..rest] -> {
+      let next =
+        ParseState(..state, characters: rest, position: state.position + 1)
+      case character {
+        "+" -> parse_sign(state, next, 1)
+        "-" -> parse_sign(state, next, -1)
+        "." -> parse_dot(state, next)
+        _ ->
+          case digit_value(character) {
+            Ok(value) -> parse_digit(next, value)
+            Error(Nil) ->
+              Error(InvalidCharacter(character:, position: state.position))
+          }
       }
     }
   }
 }
 
-/// Truncate `d` toward zero (`rounding.Down`) and return the integer.
-///
-/// Drops the fractional part regardless of its size, so `-1.9` becomes
-/// `-1` and `1.9` becomes `1`. Use
-/// [`to_int_rounded`](#to_int_rounded) when a different rounding mode
-/// is needed. Returns `PrecisionExceeded` only when the truncated
-/// integer cannot fit within `±max_safe_coefficient` (a fractional
-/// part on its own never causes a failure here, unlike
-/// [`to_int`](#to_int)).
-pub fn to_int_truncated(d d: Decimal) -> Result(Int, ArithmeticError) {
-  to_int_rounded(d: d, mode: rounding.Down)
+fn finish_parse(state: ParseState) -> Result(Decimal, ParseError) {
+  use <- bool.guard(when: !state.saw_digit, return: Error(NoDigits))
+  use <- bool.guard(
+    when: state.digits > max_safe_coefficient,
+    return: Error(ParsedValueTooLarge),
+  )
+  Ok(Decimal(state.sign * state.digits, -state.fraction_digits))
 }
 
-/// Round `d` to an integer using `mode` and return that integer.
-///
-/// `mode` is applied as if rounding to zero decimal places — so
-/// `to_int_rounded(d, mode: rounding.HalfEven)` is the natural fit
-/// for the "I rounded to N decimals, now give me the integer"
-/// workflow. Returns `PrecisionExceeded` only when the rounded
-/// integer cannot fit within `±max_safe_coefficient`.
-pub fn to_int_rounded(
-  d d: Decimal,
-  mode mode: rounding.Mode,
-) -> Result(Int, ArithmeticError) {
-  use rescaled <- result.map(rescale(d: d, target_exponent: 0, mode: mode))
-  rescaled.coefficient
+fn parse_sign(
+  state: ParseState,
+  next: ParseState,
+  sign: Int,
+) -> Result(Decimal, ParseError) {
+  use <- bool.guard(
+    when: state.position != 0 || state.saw_sign,
+    return: Error(MultipleSigns),
+  )
+  parse_loop(ParseState(..next, sign:, saw_sign: True))
 }
 
-/// Render a `Decimal` as a plain string. Preserves the encoded
-/// exponent (`new(coefficient: 100, exponent: -2)` renders as `"1.00"`,
-/// not `"1"`).
-pub fn to_string(d d: Decimal) -> String {
-  case d.coefficient {
-    0 -> render_zero(d.exponent)
-    _ -> render_nonzero(d.coefficient, d.exponent)
+fn parse_dot(
+  state: ParseState,
+  next: ParseState,
+) -> Result(Decimal, ParseError) {
+  use <- bool.guard(when: state.saw_dot, return: Error(MultipleDecimalPoints))
+  parse_loop(ParseState(..next, saw_dot: True))
+}
+
+fn parse_digit(next: ParseState, value: Int) -> Result(Decimal, ParseError) {
+  let fraction_digits = case next.saw_dot {
+    True -> next.fraction_digits + 1
+    False -> next.fraction_digits
+  }
+  // Stop accumulating once the digits are out of range so that a long
+  // input does not build a huge integer.
+  let digits = case next.digits > max_safe_coefficient {
+    True -> next.digits
+    False -> next.digits * 10 + value
+  }
+  parse_loop(ParseState(..next, digits:, fraction_digits:, saw_digit: True))
+}
+
+fn digit_value(character: String) -> Result(Int, Nil) {
+  case character {
+    "0" -> Ok(0)
+    "1" -> Ok(1)
+    "2" -> Ok(2)
+    "3" -> Ok(3)
+    "4" -> Ok(4)
+    "5" -> Ok(5)
+    "6" -> Ok(6)
+    "7" -> Ok(7)
+    "8" -> Ok(8)
+    "9" -> Ok(9)
+    _ -> Error(Nil)
   }
 }
 
-/// Render a `Decimal` with custom thousands and decimal separators.
+// Inspection -----------------------------------------------------------------
+
+/// Returns the coefficient, so `12.30` gives `1230`.
+///
+pub fn coefficient(decimal: Decimal) -> Int {
+  decimal.coefficient
+}
+
+/// Returns the base-10 exponent, so `12.30` gives `-2`.
+///
+pub fn exponent(decimal: Decimal) -> Int {
+  decimal.exponent
+}
+
+/// Returns `True` when the decimal is zero.
+///
+pub fn is_zero(decimal: Decimal) -> Bool {
+  decimal.coefficient == 0
+}
+
+/// Returns `True` when the decimal is greater than zero.
+///
+pub fn is_positive(decimal: Decimal) -> Bool {
+  decimal.coefficient > 0
+}
+
+/// Returns `True` when the decimal is less than zero.
+///
+pub fn is_negative(decimal: Decimal) -> Bool {
+  decimal.coefficient < 0
+}
+
+/// Converts a whole-number decimal to an `Int`.
+///
+/// Returns `Error(Nil)` when the decimal has a non-zero fractional
+/// part. Use `round` with `digits: 0` first to drop it.
+///
+/// ## Examples
 ///
 /// ```gleam
-/// format(d, thousands: ",", decimal_separator: ".")  // "1,234.56"
-/// format(d, thousands: ".", decimal_separator: ",")  // "1.234,56" (German)
-/// format(d, thousands: "",  decimal_separator: ".")  // "1234.56"
+/// decimal.parse("12.00") |> result.try(decimal.to_int)
+/// // -> Ok(12)
 /// ```
 ///
-/// Equivalent to [`to_string`](#to_string) when `thousands` is empty
-/// and `decimal_separator` is `"."`.
-pub fn format(
-  d d: Decimal,
-  thousands thousands: String,
-  decimal_separator decimal_separator: String,
-) -> String {
-  let raw = to_string(d: d)
-  let sign_prefix = case d.coefficient < 0 {
+/// ```gleam
+/// decimal.parse("12.34") |> result.try(decimal.to_int)
+/// // -> Error(Nil)
+/// ```
+///
+pub fn to_int(decimal: Decimal) -> Result(Int, Nil) {
+  case decimal.coefficient, decimal.exponent {
+    0, _ -> Ok(0)
+    _, exponent if exponent >= 0 ->
+      Ok(decimal.coefficient * pow_10(decimal.exponent))
+    // A coefficient below 10^16 with 16 or more places is not whole.
+    _, exponent if exponent < -15 -> Error(Nil)
+    _, _ -> {
+      let divisor = pow_10(-decimal.exponent)
+      case decimal.coefficient % divisor {
+        0 -> Ok(decimal.coefficient / divisor)
+        _ -> Error(Nil)
+      }
+    }
+  }
+}
+
+/// Renders the decimal with every digit of its exponent, so
+/// `new(coefficient: 100, exponent: -2)` is `"1.00"` and
+/// `new(coefficient: 12, exponent: 2)` is `"1200"`.
+///
+pub fn to_string(decimal: Decimal) -> String {
+  let digits = int.to_string(int.absolute_value(decimal.coefficient))
+  let sign = case decimal.coefficient < 0 {
     True -> "-"
     False -> ""
   }
-  let unsigned = case sign_prefix {
-    "" -> raw
-    _ -> string.drop_start(raw, 1)
+  case decimal.exponent >= 0 {
+    True if decimal.coefficient == 0 -> "0"
+    True -> sign <> digits <> string.repeat("0", decimal.exponent)
+    False -> {
+      let places = -decimal.exponent
+      let padded =
+        string.repeat("0", int.max(0, places + 1 - string.length(digits)))
+        <> digits
+      let split = string.length(padded) - places
+      sign
+      <> string.slice(padded, 0, split)
+      <> "."
+      <> string.slice(padded, split, places)
+    }
   }
-  let body =
-    inject_thousands(
-      unsigned: unsigned,
-      thousands: thousands,
-      decimal_separator: decimal_separator,
-    )
-  sign_prefix <> body
 }
 
-/// Like [`format`](#format), but validates the separator arguments
-/// against the locale-formatter contract and returns the failure as
-/// a `Result` instead of producing a garbled rendering. The checks
-/// catch the three configuration mistakes that `format` would
-/// otherwise swallow:
+/// Renders the decimal like `to_string`, with `thousands` between
+/// groups of three integer digits and `decimal_separator` in place of
+/// the `.`.
 ///
-/// - `thousands` or `decimal_separator` with more than one grapheme
-///   (the function is a single-character separator formatter; longer
-///   inputs almost always indicate a config-pipeline bug)
-/// - identical `thousands` and `decimal_separator` (the output would
-///   render the same character at every separator position and be
-///   un-parseable round-trip)
-/// - empty `decimal_separator` (the output would lose the integer /
-///   fractional split entirely)
+/// ## Examples
 ///
-/// `thousands` empty is still accepted and yields "no grouping" —
-/// the standard contract for `to_string`. Use this entry point when
-/// the separator arguments come from configuration, locale data, or
-/// any other dynamic source where surfacing the failure as a value
-/// matters; keep using `format` when the arguments are call-site
-/// literals you control.
-pub fn format_checked(
-  d d: Decimal,
-  thousands thousands: String,
-  decimal_separator decimal_separator: String,
-) -> Result(String, FormatError) {
-  use _ <- result.try(check_separator_pair(thousands, decimal_separator))
-  Ok(format(d: d, thousands: thousands, decimal_separator: decimal_separator))
-}
-
-fn check_separator_pair(
-  thousands: String,
-  decimal_separator: String,
-) -> Result(Nil, FormatError) {
-  use <- bool.guard(
-    when: decimal_separator == "",
-    return: Error(EmptyDecimalSeparator),
-  )
-  use <- bool.guard(
-    when: string.length(decimal_separator) > 1,
-    return: Error(MultiCharSeparator(field: "decimal", value: decimal_separator)),
-  )
-  use <- bool.guard(
-    when: string.length(thousands) > 1,
-    return: Error(MultiCharSeparator(field: "thousands", value: thousands)),
-  )
-  use <- bool.guard(
-    when: thousands != "" && thousands == decimal_separator,
-    return: Error(SeparatorsCollide(value: thousands)),
-  )
-  Ok(Nil)
-}
-
-fn inject_thousands(
-  unsigned unsigned: String,
+/// ```gleam
+/// let assert Ok(price) = decimal.parse("1234567.5")
+/// decimal.format(price, thousands: ".", decimal_separator: ",")
+/// // -> "1.234.567,5"
+/// ```
+///
+pub fn format(
+  decimal: Decimal,
   thousands thousands: String,
   decimal_separator decimal_separator: String,
 ) -> String {
-  case string.split(unsigned, ".") {
-    [integer_part] -> group_integer(integer_part, thousands)
-    [integer_part, fraction_part] ->
-      group_integer(integer_part, thousands)
+  let sign = case decimal.coefficient < 0 {
+    True -> "-"
+    False -> ""
+  }
+  let unsigned = to_string(absolute(decimal))
+  case string.split_once(unsigned, on: ".") {
+    Ok(#(integer, fraction)) ->
+      sign
+      <> group_thousands(integer, thousands)
       <> decimal_separator
-      <> fraction_part
-    _ -> unsigned
+      <> fraction
+    Error(Nil) -> sign <> group_thousands(unsigned, thousands)
   }
 }
 
-fn group_integer(digits: String, separator: String) -> String {
+fn group_thousands(digits: String, separator: String) -> String {
   use <- bool.guard(when: separator == "", return: digits)
-  let chars = string.to_graphemes(digits)
-  let length = list.length(chars)
-  let groups = group_right(chars: chars, length: length, acc: [])
-  groups
-  |> list.map(string.concat)
+  digits
+  |> string.to_graphemes
+  |> list.reverse
+  |> list.sized_chunk(into: 3)
+  |> list.map(fn(group) { group |> list.reverse |> string.concat })
+  |> list.reverse
   |> string.join(with: separator)
 }
 
-fn group_right(
-  chars chars: List(String),
-  length length: Int,
-  acc acc: List(List(String)),
-) -> List(List(String)) {
-  use <- bool.guard(when: length <= 3, return: [chars, ..acc])
-  let head_size = length - 3
-  let head = list.take(chars, head_size)
-  let tail = list.drop(chars, head_size)
-  group_right(chars: head, length: head_size, acc: [tail, ..acc])
-}
+// Arithmetic -----------------------------------------------------------------
 
-fn render_zero(exp: Int) -> String {
-  use <- bool.guard(when: exp >= 0, return: "0")
-  "0." <> string.repeat("0", -exp)
-}
-
-fn render_nonzero(coefficient: Int, exp: Int) -> String {
-  let sign_prefix = case coefficient < 0 {
-    True -> "-"
-    False -> ""
-  }
-  let digits = int.to_string(int.absolute_value(coefficient))
-  use <- bool.guard(
-    when: exp >= 0,
-    return: sign_prefix <> digits <> string.repeat("0", exp),
-  )
-  render_with_fraction(
-    sign_prefix: sign_prefix,
-    digits: digits,
-    fraction_size: -exp,
-  )
-}
-
-fn render_with_fraction(
-  sign_prefix sign_prefix: String,
-  digits digits: String,
-  fraction_size fraction_size: Int,
-) -> String {
-  let digit_length = string.length(digits)
-  use <- bool.guard(
-    when: digit_length <= fraction_size,
-    return: sign_prefix
-      <> "0."
-      <> string.repeat("0", fraction_size - digit_length)
-      <> digits,
-  )
-  let integer_part = string.slice(digits, 0, digit_length - fraction_size)
-  let fraction_part =
-    string.slice(digits, digit_length - fraction_size, fraction_size)
-  sign_prefix <> integer_part <> "." <> fraction_part
-}
-
-// --- Sign predicates -----------------------------------------------------
-
-/// Test for the zero decimal.
-pub fn is_zero(d d: Decimal) -> Bool {
-  d.coefficient == 0
-}
-
-/// Test for a strictly positive decimal.
-pub fn is_positive(d d: Decimal) -> Bool {
-  d.coefficient > 0
-}
-
-/// Test for a strictly negative decimal.
-pub fn is_negative(d d: Decimal) -> Bool {
-  d.coefficient < 0
-}
-
-// --- Sign helpers --------------------------------------------------------
-
-/// Negate the value. Always safe (the coefficient sign flips but
-/// magnitude does not change).
-pub fn negate(d d: Decimal) -> Decimal {
-  Decimal(coefficient: -d.coefficient, exponent: d.exponent)
-}
-
-/// Absolute value. Always safe.
-pub fn absolute(d d: Decimal) -> Decimal {
-  Decimal(coefficient: int.absolute_value(d.coefficient), exponent: d.exponent)
-}
-
-// --- Arithmetic ----------------------------------------------------------
-
-/// Add two decimals.
+/// Returns the decimal with its sign flipped.
 ///
-/// When one operand is zero the result is just the other operand —
-/// we short-circuit without going through `align`. Without the
-/// short-circuit, `align` would try to scale the smaller-exponent
-/// operand up to the larger's exponent (e.g. `1 × 10^20` for
-/// `new(1, 20) + zero()`), which can exceed `max_safe_coefficient`
-/// and surface a spurious `PrecisionExceeded` despite the
-/// mathematical result fitting trivially. When both operands are
-/// zero we still return zero, but with the smaller of the two
-/// exponents so that `add(a, b) == add(b, a)` holds at the level of
-/// structural equality (the same invariant `align` provided before).
-pub fn add(a a: Decimal, b b: Decimal) -> Result(Decimal, ArithmeticError) {
+pub fn negate(decimal: Decimal) -> Decimal {
+  Decimal(..decimal, coefficient: -decimal.coefficient)
+}
+
+/// Returns the decimal without its sign.
+///
+pub fn absolute(decimal: Decimal) -> Decimal {
+  Decimal(..decimal, coefficient: int.absolute_value(decimal.coefficient))
+}
+
+/// Adds two decimals. The result has the smaller of the two exponents,
+/// except that adding zero returns the other decimal unchanged.
+///
+/// Returns `Error(PrecisionExceeded)` when the sum is out of range.
+///
+pub fn add(a: Decimal, b: Decimal) -> Result(Decimal, ArithmeticError) {
   case a.coefficient, b.coefficient {
-    0, 0 ->
-      Ok(Decimal(coefficient: 0, exponent: int.min(a.exponent, b.exponent)))
+    0, 0 -> Ok(Decimal(0, int.min(a.exponent, b.exponent)))
     0, _ -> Ok(b)
     _, 0 -> Ok(a)
     _, _ -> {
-      use #(ac, bc, target) <- result.try(align(a, b))
-      use sum <- result.map(check_precision(ac + bc))
-      Decimal(coefficient: sum, exponent: target)
+      let exponent = int.min(a.exponent, b.exponent)
+      use left <- result.try(scale_up(a.coefficient, a.exponent - exponent))
+      use right <- result.try(scale_up(b.coefficient, b.exponent - exponent))
+      checked(left + right, exponent)
     }
   }
 }
 
-/// Subtract `b` from `a`.
-pub fn subtract(
-  a a: Decimal,
-  b b: Decimal,
-) -> Result(Decimal, ArithmeticError) {
-  add(a: a, b: negate(d: b))
-}
-
-/// Multiply two decimals.
-pub fn multiply(
-  a a: Decimal,
-  b b: Decimal,
-) -> Result(Decimal, ArithmeticError) {
-  use product <- result.map(check_precision(a.coefficient * b.coefficient))
-  Decimal(coefficient: product, exponent: a.exponent + b.exponent)
-}
-
-/// Divide `a` by `b`, returning a result rounded to `digits` decimal
-/// places using `mode`.
+/// Subtracts `b` from `a`. The result has the smaller of the two
+/// exponents.
 ///
-/// Returns [`DivisionByZero`](#ArithmeticError) when `b` is zero, or
-/// [`PrecisionExceeded`](#ArithmeticError) when the intermediate
-/// representation would exceed `±9_007_199_254_740_991` (the
-/// JavaScript-safe integer ceiling). See
-/// [`max_safe_digits`](#max_safe_digits) for the practical upper
-/// bound on `digits`: requests above that value will exceed the
-/// precision window even when both operands are unit-magnitude,
-/// and larger operands shrink the headroom further. For the
-/// per-call boundary the rule of thumb is
-/// `digits ≤ floor(log10(max_safe_coefficient / abs(a.coefficient)))
-///  + (b.exponent − a.exponent)`. Callers needing more precision
-/// should reach for a dedicated arbitrary-precision library
-/// (Python `decimal` with `prec=50+`, etc.).
+pub fn subtract(a: Decimal, b: Decimal) -> Result(Decimal, ArithmeticError) {
+  add(a, negate(b))
+}
+
+/// Multiplies two decimals without rounding. The exponents add up, so
+/// `1.5 × 0.25` is `0.375`.
+///
+/// Returns `Error(PrecisionExceeded)` when the product is out of range.
+///
+pub fn multiply(a: Decimal, b: Decimal) -> Result(Decimal, ArithmeticError) {
+  checked(a.coefficient * b.coefficient, a.exponent + b.exponent)
+}
+
+/// Divides `a` by `b` and rounds the quotient to `digits` places after
+/// the decimal point.
+///
+/// Returns `Error(DivisionByZero)` when `b` is zero, and
+/// `Error(PrecisionExceeded)` when the quotient at that many places is
+/// out of range, which happens from about 15 places for `1 / 3`.
+///
+/// ## Examples
+///
+/// ```gleam
+/// let assert Ok(ten) = decimal.from_int(10)
+/// let assert Ok(three) = decimal.from_int(3)
+/// decimal.divide(ten, three, digits: 2, rounding: decimal.HalfEven)
+/// |> result.map(decimal.to_string)
+/// // -> Ok("3.33")
+/// ```
+///
 pub fn divide(
-  a a: Decimal,
-  b b: Decimal,
+  a: Decimal,
+  b: Decimal,
   digits digits: Int,
-  mode mode: rounding.Mode,
+  rounding mode: RoundingMode,
 ) -> Result(Decimal, ArithmeticError) {
   use <- bool.guard(when: b.coefficient == 0, return: Error(DivisionByZero))
-  divide_nonzero(a: a, b: b, digits: digits, mode: mode)
-}
-
-fn divide_nonzero(
-  a a: Decimal,
-  b b: Decimal,
-  digits digits: Int,
-  mode mode: rounding.Mode,
-) -> Result(Decimal, ArithmeticError) {
-  let result_sign = sign_of(a.coefficient) * sign_of(b.coefficient)
-  let abs_a = int.absolute_value(a.coefficient)
-  let abs_b = int.absolute_value(b.coefficient)
+  use <- bool.guard(when: a.coefficient == 0, return: checked(0, -digits))
+  let sign = sign_of(a.coefficient) * sign_of(b.coefficient)
+  let numerator = int.absolute_value(a.coefficient)
+  let denominator = int.absolute_value(b.coefficient)
   let shift = a.exponent - b.exponent + digits
-  use #(numerator, denominator) <- result.try(prepare_division(
-    abs_a: abs_a,
-    abs_b: abs_b,
-    shift: shift,
-  ))
-  let q = numerator / denominator
-  let r = numerator - q * denominator
-  let bumped =
-    apply_rounding(
-      q: q,
-      r: r,
-      denominator: denominator,
-      result_sign: result_sign,
-      mode: mode,
-    )
-  use safe_q <- result.map(check_precision(bumped))
-  Decimal(coefficient: result_sign * safe_q, exponent: -digits)
-}
-
-fn prepare_division(
-  abs_a abs_a: Int,
-  abs_b abs_b: Int,
-  shift shift: Int,
-) -> Result(#(Int, Int), ArithmeticError) {
   case shift >= 0 {
     True -> {
-      use scaled_a <- result.map(scale_up(abs_a, shift))
-      #(scaled_a, abs_b)
+      use numerator <- result.try(scale_up(numerator, shift))
+      round_quotient(numerator, denominator, sign, mode)
+      |> checked(-digits)
     }
-    False -> {
-      use scaled_b <- result.map(scale_up(abs_b, -shift))
-      #(abs_a, scaled_b)
-    }
+    False ->
+      case scale_up(denominator, -shift) {
+        Ok(denominator) ->
+          round_quotient(numerator, denominator, sign, mode)
+          |> checked(-digits)
+        // The scaled divisor is out of range, so it is larger than the
+        // numerator and the quotient is below 1. Compare twice the
+        // numerator with the divisor as digit strings to round it.
+        Error(PrecisionExceeded) | Error(DivisionByZero) -> {
+          let #(remainder, divisor) = case
+            compare_digits(
+              int.to_string(2 * numerator),
+              int.to_string(denominator) <> string.repeat("0", -shift),
+            )
+          {
+            order.Lt -> #(1, 10)
+            order.Eq -> #(1, 2)
+            order.Gt -> #(9, 10)
+          }
+          round_quotient(remainder, divisor, sign, mode) |> checked(-digits)
+        }
+      }
   }
 }
 
-fn apply_rounding(
-  q q: Int,
-  r r: Int,
-  denominator denominator: Int,
-  result_sign result_sign: Int,
-  mode mode: rounding.Mode,
-) -> Int {
-  use <- bool.guard(when: r == 0, return: q)
-  case
-    should_bump_up(
-      r: r,
-      denominator: denominator,
-      q: q,
-      result_sign: result_sign,
-      mode: mode,
-    )
-  {
-    True -> q + 1
-    False -> q
-  }
-}
-
-fn should_bump_up(
-  r r: Int,
-  denominator denominator: Int,
-  q q: Int,
-  result_sign result_sign: Int,
-  mode mode: rounding.Mode,
-) -> Bool {
-  case mode {
-    rounding.HalfEven -> half_even_bump(r: r, denominator: denominator, q: q)
-    rounding.HalfUp -> 2 * r >= denominator
-    rounding.HalfDown -> 2 * r > denominator
-    rounding.Up -> True
-    rounding.Down -> False
-    rounding.Ceiling -> result_sign > 0
-    rounding.Floor -> result_sign < 0
-  }
-}
-
-fn half_even_bump(r r: Int, denominator denominator: Int, q q: Int) -> Bool {
-  case int.compare(2 * r, denominator) {
-    order.Gt -> True
-    order.Lt -> False
-    order.Eq -> q % 2 == 1
-  }
-}
-
-// --- Rescaling -----------------------------------------------------------
-
-/// Round to `digits` decimal places. The result always carries exactly
-/// `digits` fractional places: a coarser-precision input is zero-padded
-/// (so `to_string(round(from_int(2000), 2, _))` is `"2000.00"`), a
-/// finer-precision input is rounded using `mode`, and `digits == 0`
-/// yields a plain integer rendering. This is the only useful contract
-/// for monetary formatting — `to_string(round(d, 2, _))` is `"12.30"`,
-/// never `"12.3"`.
+/// Rounds the decimal to `digits` places after the decimal point.
 ///
-/// `round` is the non-failing form of [`rescale`](#rescale) targeting
-/// exponent `-digits`; the two share one implementation so their results
-/// cannot drift. Padding can in principle overflow
-/// `±9_007_199_254_740_991` (only reachable on the JavaScript target);
-/// when it would, `round` falls back to returning the input unchanged
-/// rather than failing. Reach for `rescale` directly when you need to
-/// observe that overflow as an `Error`.
+/// The result always has exactly `digits` places: `12.3` rounded to 2
+/// places is `12.30`. A negative `digits` rounds to tens, hundreds and
+/// so on. Returns `Error(PrecisionExceeded)` when the padded or rounded
+/// value is out of range.
+///
+/// ## Examples
+///
+/// ```gleam
+/// let assert Ok(price) = decimal.parse("2.345")
+/// decimal.round(price, digits: 2, rounding: decimal.HalfEven)
+/// |> result.map(decimal.to_string)
+/// // -> Ok("2.34")
+/// ```
+///
+/// ```gleam
+/// let assert Ok(price) = decimal.parse("2.345")
+/// decimal.round(price, digits: 2, rounding: decimal.HalfUp)
+/// |> result.map(decimal.to_string)
+/// // -> Ok("2.35")
+/// ```
+///
 pub fn round(
-  d d: Decimal,
+  decimal: Decimal,
   digits digits: Int,
-  mode mode: rounding.Mode,
-) -> Decimal {
-  case rescale(d: d, target_exponent: -digits, mode: mode) {
-    Ok(result) -> result
-    // nolint: thrown_away_error -- round is total by contract; a padding overflow (JS target only) degrades to the unpadded input rather than failing. Callers who need to observe the overflow use rescale, which returns the Error.
-    Error(_) -> d
-  }
-}
-
-/// Truncate to `digits` decimal places (rounding toward zero). Like
-/// [`round`](#round), the result carries exactly `digits` fractional
-/// places — a coarser-precision input is zero-padded — but the rounding
-/// direction is always toward zero (`rounding.Down`).
-pub fn truncate(d d: Decimal, digits digits: Int) -> Decimal {
-  round(d: d, digits: digits, mode: rounding.Down)
-}
-
-/// Force the decimal to a specific exponent. When the new exponent is
-/// finer (smaller), the coefficient grows by zero-padding (may overflow).
-/// When the new exponent is coarser (larger), digits are dropped using
-/// `mode`.
-pub fn rescale(
-  d d: Decimal,
-  target_exponent target_exponent: Int,
-  mode mode: rounding.Mode,
+  rounding mode: RoundingMode,
 ) -> Result(Decimal, ArithmeticError) {
-  case int.compare(target_exponent, d.exponent) {
-    order.Eq -> Ok(d)
+  let target = -digits
+  case int.compare(target, decimal.exponent) {
+    order.Eq -> Ok(decimal)
     order.Lt -> {
-      use scaled <- result.map(scale_up(
-        d.coefficient,
-        d.exponent - target_exponent,
+      use coefficient <- result.try(scale_up(
+        decimal.coefficient,
+        decimal.exponent - target,
       ))
-      Decimal(coefficient: scaled, exponent: target_exponent)
+      checked(coefficient, target)
     }
-    order.Gt ->
-      Ok(drop_digits(d: d, target_exponent: target_exponent, mode: mode))
+    order.Gt -> {
+      let sign = sign_of(decimal.coefficient)
+      let magnitude = int.absolute_value(decimal.coefficient)
+      let dropped = target - decimal.exponent
+      // A magnitude below 10^16 shifted by 17 or more places is below
+      // 0.1, so it rounds like any other small non-zero remainder.
+      let coefficient = case dropped > 16, magnitude {
+        _, 0 -> 0
+        True, _ -> round_quotient(1, 10, sign, mode)
+        False, _ -> round_quotient(magnitude, pow_10(dropped), sign, mode)
+      }
+      checked(coefficient, target)
+    }
   }
 }
 
-fn drop_digits(
-  d d: Decimal,
-  target_exponent target_exponent: Int,
-  mode mode: rounding.Mode,
-) -> Decimal {
-  let diff = target_exponent - d.exponent
-  let divisor = pow_10(diff)
-  let abs_c = int.absolute_value(d.coefficient)
-  let q = abs_c / divisor
-  let r = abs_c - q * divisor
-  let sign = sign_of(d.coefficient)
-  let bumped =
-    apply_rounding(
-      q: q,
-      r: r,
-      denominator: divisor,
-      result_sign: sign,
-      mode: mode,
-    )
-  Decimal(coefficient: sign * bumped, exponent: target_exponent)
-}
-
-// --- Comparison ----------------------------------------------------------
-
-/// Total ordering. Two values with the same numeric value compare as
-/// equal even when their exponents differ.
-pub fn compare(a a: Decimal, b b: Decimal) -> order.Order {
-  case align(a, b) {
-    Ok(#(ac, bc, _)) -> int.compare(ac, bc)
-    Error(PrecisionExceeded) -> compare_by_magnitude(a, b)
-    Error(DivisionByZero) -> compare_by_magnitude(a, b)
+// Divides two non-negative integers and applies the rounding mode, then
+// restores the sign.
+fn round_quotient(
+  numerator: Int,
+  denominator: Int,
+  sign: Int,
+  mode: RoundingMode,
+) -> Int {
+  let quotient = numerator / denominator
+  let remainder = numerator - quotient * denominator
+  let bump = case remainder {
+    0 -> False
+    _ ->
+      case mode {
+        HalfEven ->
+          case int.compare(2 * remainder, denominator) {
+            order.Gt -> True
+            order.Lt -> False
+            order.Eq -> quotient % 2 == 1
+          }
+        HalfUp -> 2 * remainder >= denominator
+        HalfDown -> 2 * remainder > denominator
+        Up -> True
+        Down -> False
+        Ceiling -> sign > 0
+        Floor -> sign < 0
+      }
+  }
+  case bump {
+    True -> sign * { quotient + 1 }
+    False -> sign * quotient
   }
 }
 
-/// Equality test by numeric value, not by representation.
-/// `equal(new(coefficient: 100, exponent: -2), one())` is `True`.
-pub fn equal(a a: Decimal, b b: Decimal) -> Bool {
-  let na = normalize(a)
-  let nb = normalize(b)
-  na.coefficient == nb.coefficient && na.exponent == nb.exponent
-}
+// Comparison -----------------------------------------------------------------
 
-fn normalize(d: Decimal) -> Decimal {
-  case d.coefficient {
-    0 -> Decimal(coefficient: 0, exponent: 0)
-    _ -> strip_trailing_zeros(d)
+/// Compares two decimals by value, so `1.0` and `1.00` are equal.
+///
+pub fn compare(a: Decimal, b: Decimal) -> order.Order {
+  let exponent = int.min(a.exponent, b.exponent)
+  case
+    scale_up(a.coefficient, a.exponent - exponent),
+    scale_up(b.coefficient, b.exponent - exponent)
+  {
+    Ok(left), Ok(right) -> int.compare(left, right)
+    _, _ -> compare_by_magnitude(a, b)
   }
 }
 
-fn strip_trailing_zeros(d: Decimal) -> Decimal {
-  case d.coefficient % 10 {
-    0 -> strip_trailing_zeros(Decimal(d.coefficient / 10, d.exponent + 1))
-    _ -> d
-  }
+/// Returns `True` when two decimals have the same value. `==` compares
+/// the representation instead, so `1.0 == 1.00` is `False` but
+/// `equal(1.0, 1.00)` is `True`.
+///
+pub fn equal(a: Decimal, b: Decimal) -> Bool {
+  compare(a, b) == order.Eq
 }
 
+// Used when aligning the exponents would overflow: compares the sign,
+// then the position of the leading digit, then the digits themselves.
 fn compare_by_magnitude(a: Decimal, b: Decimal) -> order.Order {
   case int.compare(sign_of(a.coefficient), sign_of(b.coefficient)) {
-    order.Eq -> compare_same_sign(a, b)
+    order.Eq -> {
+      let a_digits = int.to_string(int.absolute_value(a.coefficient))
+      let b_digits = int.to_string(int.absolute_value(b.coefficient))
+      let a_length = string.length(a_digits)
+      let b_length = string.length(b_digits)
+      let unsigned = case
+        int.compare(a_length + a.exponent, b_length + b.exponent)
+      {
+        order.Eq -> {
+          let width = int.max(a_length, b_length)
+          string.compare(
+            a_digits <> string.repeat("0", width - a_length),
+            b_digits <> string.repeat("0", width - b_length),
+          )
+        }
+        other -> other
+      }
+      case a.coefficient < 0 {
+        True -> order.negate(unsigned)
+        False -> unsigned
+      }
+    }
     other -> other
   }
 }
 
-fn compare_same_sign(a: Decimal, b: Decimal) -> order.Order {
-  let na = normalize(a)
-  let nb = normalize(b)
-  let abs_a = int.absolute_value(na.coefficient)
-  let abs_b = int.absolute_value(nb.coefficient)
-  let len_a = digit_count(abs_a)
-  let len_b = digit_count(abs_b)
-  let mag_a = len_a + na.exponent
-  let mag_b = len_b + nb.exponent
-  let raw = case int.compare(mag_a, mag_b) {
-    order.Eq ->
-      compare_same_magnitude(a: abs_a, len_a: len_a, b: abs_b, len_b: len_b)
+// Internals ------------------------------------------------------------------
+
+// Every Decimal is built here or by a constructor that keeps the
+// invariant on the type.
+fn checked(
+  coefficient: Int,
+  exponent: Int,
+) -> Result(Decimal, ArithmeticError) {
+  let magnitude = int.absolute_value(coefficient)
+  let fits = case magnitude, exponent > 0 {
+    0, _ -> True
+    _, False -> magnitude <= max_safe_coefficient
+    _, True ->
+      exponent <= 15 && magnitude * pow_10(exponent) <= max_safe_coefficient
+  }
+  case fits {
+    True -> Ok(Decimal(coefficient, exponent))
+    False -> Error(PrecisionExceeded)
+  }
+}
+
+fn scale_up(coefficient: Int, places: Int) -> Result(Int, ArithmeticError) {
+  case coefficient, places {
+    0, _ -> Ok(0)
+    _, 0 -> Ok(coefficient)
+    // Any non-zero coefficient times 10^16 is out of range.
+    _, _ if places > 15 -> Error(PrecisionExceeded)
+    _, _ -> {
+      let scaled = coefficient * pow_10(places)
+      case int.absolute_value(scaled) > max_safe_coefficient {
+        True -> Error(PrecisionExceeded)
+        False -> Ok(scaled)
+      }
+    }
+  }
+}
+
+fn sign_of(value: Int) -> Int {
+  use <- bool.guard(when: value < 0, return: -1)
+  1
+}
+
+// Compares two non-negative integers written without leading zeros.
+fn compare_digits(a: String, b: String) -> order.Order {
+  case int.compare(string.length(a), string.length(b)) {
+    order.Eq -> string.compare(a, b)
     other -> other
   }
-  use <- bool.guard(when: na.coefficient < 0, return: reverse_order(raw))
-  raw
 }
 
-/// Compare two non-negative integers that share a common magnitude
-/// (`digit_count + exponent` ties at the call site). The two
-/// coefficients may carry different digit counts; the shorter is
-/// right-padded with zeros to match the longer, after which a
-/// lexicographic compare of equal-length non-negative digit strings is
-/// numerically correct. This path avoids `a * 10^k` to remain safe
-/// even when the caller has constructed an out-of-bounds coefficient
-/// via `new/2`.
-fn compare_same_magnitude(
-  a a: Int,
-  len_a len_a: Int,
-  b b: Int,
-  len_b len_b: Int,
-) -> order.Order {
-  let max_len = int.max(len_a, len_b)
-  let str_a = int.to_string(a) <> string.repeat("0", max_len - len_a)
-  let str_b = int.to_string(b) <> string.repeat("0", max_len - len_b)
-  string.compare(str_a, str_b)
-}
-
-fn reverse_order(o: order.Order) -> order.Order {
-  case o {
-    order.Lt -> order.Gt
-    order.Gt -> order.Lt
-    order.Eq -> order.Eq
-  }
-}
-
-fn digit_count(n: Int) -> Int {
-  use <- bool.guard(when: n < 10, return: 1)
-  1 + digit_count(n / 10)
-}
-
-// --- Internals -----------------------------------------------------------
-
-fn sign_of(n: Int) -> Int {
-  case int.compare(n, 0) {
-    order.Lt -> -1
-    order.Gt -> 1
-    order.Eq -> 1
-  }
-}
-
-fn check_precision(n: Int) -> Result(Int, ArithmeticError) {
-  use <- bool.guard(
-    when: int.absolute_value(n) > max_safe_coefficient,
-    return: Error(PrecisionExceeded),
-  )
-  Ok(n)
-}
-
-fn align(a: Decimal, b: Decimal) -> Result(#(Int, Int, Int), ArithmeticError) {
-  let target = int.min(a.exponent, b.exponent)
-  use scaled_a <- result.try(scale_up(a.coefficient, a.exponent - target))
-  use scaled_b <- result.map(scale_up(b.coefficient, b.exponent - target))
-  #(scaled_a, scaled_b, target)
-}
-
-fn scale_up(c: Int, by: Int) -> Result(Int, ArithmeticError) {
-  case by {
-    0 -> Ok(c)
-    _ -> check_precision(c * pow_10(by))
-  }
-}
-
-fn pow_10(n: Int) -> Int {
-  pow_10_loop(n, 1)
-}
-
-fn pow_10_loop(n: Int, acc: Int) -> Int {
-  use <- bool.guard(when: n <= 0, return: acc)
-  pow_10_loop(n - 1, acc * 10)
+fn pow_10(places: Int) -> Int {
+  int.product(list.repeat(10, places))
 }

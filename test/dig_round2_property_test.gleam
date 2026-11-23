@@ -11,10 +11,9 @@ import gleam/string
 import gleeunit/should
 
 import finanza/card
-import finanza/currency
-import finanza/currency/catalog
 import finanza/decimal
-import finanza/decimal/rounding
+import finanza/money
+import support
 
 const trials: Int = 200
 
@@ -47,7 +46,7 @@ fn gen_decimal(prng: Prng) -> #(decimal.Decimal, Prng) {
   // Keep coefficients small enough that products are well inside 2^53.
   let #(coef, prng2) = int_in_range(prng, -1_000_000, 1_000_000)
   let #(exp, prng3) = int_in_range(prng2, -4, 2)
-  #(decimal.new(coefficient: coef, exponent: exp), prng3)
+  #(support.new(coefficient: coef, exponent: exp), prng3)
 }
 
 // --- Decimal properties --------------------------------------------------
@@ -147,19 +146,19 @@ pub fn decimal_compare_antisymmetric_test() -> Nil {
 pub fn decimal_round_idempotent_test() -> Nil {
   let _ =
     run_one(31, fn(a) {
-      let r1 = decimal.round(a, 2, rounding.HalfEven)
-      let r2 = decimal.round(r1, 2, rounding.HalfEven)
+      let r1 = support.round(a, 2, decimal.HalfEven)
+      let r2 = support.round(r1, 2, decimal.HalfEven)
       decimal.equal(r1, r2)
     })
   Nil
 }
 
 pub fn decimal_string_round_trip_test() -> Nil {
-  // from_string(to_string(d)) is numerically equal to d.
+  // parse(to_string(d)) is numerically equal to d.
   let _ =
     run_one(37, fn(a) {
       let s = decimal.to_string(a)
-      case decimal.from_string(s) {
+      case decimal.parse(s) {
         Ok(reparsed) -> decimal.equal(reparsed, a)
         Error(_) -> False
       }
@@ -174,8 +173,8 @@ pub fn money_from_minor_to_minor_round_trip_test() -> Nil {
   let _ =
     iterate(prng, trials, fn(p) {
       let #(units, p1) = int_in_range(p, -1_000_000, 1_000_000)
-      let m = currency.from_minor(units, catalog.usd())
-      case currency.to_minor(m, rounding.HalfEven) {
+      let m = support.from_minor(units, money.usd)
+      case money.to_minor(m, decimal.HalfEven) {
         Ok(back) ->
           case back == units {
             True -> p1
@@ -194,13 +193,13 @@ pub fn allocate_preserves_total_test() -> Nil {
       let #(units, p1) = int_in_range(p, 1, 10_000_000)
       let #(n_ratios, p2) = int_in_range(p1, 1, 7)
       let #(ratios, p3) = generate_ratios(p2, n_ratios)
-      let m = currency.from_minor(units, catalog.usd())
-      case currency.allocate(m, ratios) {
+      let m = support.from_minor(units, money.usd)
+      case money.allocate(m, ratios) {
         Ok(parts) -> {
           let total =
             parts
             |> list.map(fn(part) {
-              case currency.to_minor(part, rounding.HalfEven) {
+              case money.to_minor(part, decimal.HalfEven) {
                 Ok(u) -> u
                 Error(_) -> 0
               }
@@ -327,7 +326,7 @@ pub fn mask_preserves_keep_counts_test() -> Nil {
       // Generate digit-only PAN of length 13–19.
       let #(length, p1) = int_in_range(p, 13, 19)
       let #(pan, p2) = random_digits(p1, length)
-      case card.mask(pan, card.default_mask()) {
+      case card.mask(pan, card.default_mask) {
         Ok(masked) -> {
           // The masked string should contain the first 4 digits of the
           // PAN as a substring and the last 4 digits as a substring.

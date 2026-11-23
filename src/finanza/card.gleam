@@ -1,10 +1,9 @@
-//// Payment-card primitives: PAN normalisation, Luhn validation,
-//// brand detection by IIN range, masking, BIN/last-four extraction,
-//// and expiry parsing.
+//// Payment card numbers (PANs): Luhn check, brand detection, masking
+//// and expiry dates.
 ////
-//// IIN ranges are a static snapshot of stable card-brand prefixes
-//// and lengths and are *not* a BIN-to-issuer database. See
-//// `doc/reference/specs/iso-iec-7812-card.md` for sources.
+//// Brands are detected from a fixed snapshot of prefix and length rules
+//// taken in May 2026. This is not a BIN database and does not identify
+//// issuers.
 
 import gleam/bool
 import gleam/int
@@ -12,8 +11,8 @@ import gleam/list
 import gleam/result
 import gleam/string
 
-/// Recognised card brands. `Unknown` is returned when no IIN range
-/// matches.
+/// A card brand. `Unknown` means no prefix and length rule matched.
+///
 pub type Brand {
   Visa
   Mastercard
@@ -25,50 +24,71 @@ pub type Brand {
   Unknown
 }
 
-/// Errors raised by PAN operations.
+/// Why a card number was rejected.
+///
 pub type ValidationError {
-  /// Input was empty or only contained whitespace and separators.
+  /// Nothing was left after removing spaces and separators.
   EmptyInput
-  /// Input contained a non-digit character after normalisation.
+  /// A character other than a digit was left after `normalize`.
   InvalidCharacter
-  /// The PAN's length is not valid for any recognised brand.
+  /// The number has too few or too many digits.
   InvalidLength(length: Int)
-  /// The PAN failed the Luhn check.
+  /// The number fails the Luhn check.
   InvalidLuhn
-  /// The PAN's prefix did not match any recognised brand IIN range.
+  /// The number passes the Luhn check but matches no brand.
   UnknownBrand
-  /// Expiry parse received a malformed `MM/YY` or `MM/YYYY` value.
-  InvalidExpiry
 }
 
-/// Options for [`mask`](#mask). Build with [`default_mask`](#default_mask)
-/// and the `with_*` setters.
-pub opaque type MaskOptions {
+/// Options for `mask`. Start from `default_mask` and change the fields
+/// you need.
+///
+pub type MaskOptions {
   MaskOptions(
+    /// Digits to show at the start.
     keep_first: Int,
+    /// Digits to show at the end.
     keep_last: Int,
-    mask_char: String,
+    /// Shown in place of each hidden digit.
+    mask_character: String,
+    /// Digits per group. 0 or less turns grouping off.
     group_size: Int,
+    /// Put between groups.
     group_separator: String,
   )
 }
 
-// --- Normalisation ------------------------------------------------------
+/// Shows the first 4 and last 4 digits, hides the rest with `*`, and
+/// groups by 4 with spaces: `"4111 **** **** 1111"`.
+///
+pub const default_mask =
+  MaskOptions(
+    keep_first: 4,
+    keep_last: 4,
+    mask_character: "*",
+    group_size: 4,
+    group_separator: " ",
+  )
 
-/// Strip ASCII whitespace (` `, `\t`, `\n`, `\r`, VT, FF) and
-/// hyphen-style separators (`-`, `_`, `.`), and fold the three
-/// digit-Unicode blocks IMEs commonly produce into their ASCII
-/// equivalents:
+/// A card expiry month and four-digit year.
 ///
-/// - FULLWIDTH DIGIT ZERO..NINE (`U+FF10..U+FF19`) → `"0".."9"`
-/// - ARABIC-INDIC DIGIT ZERO..NINE (`U+0660..U+0669`) → `"0".."9"`
-/// - EXTENDED ARABIC-INDIC DIGIT ZERO..NINE (`U+06F0..U+06F9`) → `"0".."9"`
+pub type Expiry {
+  Expiry(month: Int, year: Int)
+}
+
+// --- Normalization ------------------------------------------------------
+
+/// Removes ASCII whitespace and the separators `-`, `_` and `.`, and
+/// turns fullwidth and Arabic-Indic digits into ASCII digits. Other
+/// characters are kept, so the result may still not be all digits.
 ///
-/// Other Unicode whitespace (NBSP, ideographic space) is not stripped
-/// — pre-normalise if needed. The function does not validate that the
-/// result is digits-only; downstream `luhn_valid` and `validate`
-/// continue to enforce that contract.
-pub fn normalize(pan pan: String) -> String {
+/// ## Examples
+///
+/// ```gleam
+/// card.normalize("4111-1111 1111.1111")
+/// // -> "4111111111111111"
+/// ```
+///
+pub fn normalize(pan: String) -> String {
   pan
   |> string.to_graphemes
   |> list.filter(keeping: is_pan_char)
@@ -78,16 +98,12 @@ pub fn normalize(pan pan: String) -> String {
 
 fn is_pan_char(grapheme: String) -> Bool {
   case grapheme {
-    " " | "\t" | "\n" | "\r" | "\u{000B}" | "\u{000C}" -> False
+    " " | "\t" | "\n" | "\r" | "\r\n" | "\u{000B}" | "\u{000C}" -> False
     "-" | "_" | "." -> False
     _ -> True
   }
 }
 
-/// Map fullwidth and Arabic-Indic digit code points to their ASCII
-/// equivalents. Non-digit graphemes pass through unchanged so the
-/// downstream digit-or-not check still sees the original input for
-/// reporting.
 fn fold_digit_grapheme(grapheme: String) -> String {
   case grapheme {
     "\u{FF10}" -> "0"
@@ -126,16 +142,23 @@ fn fold_digit_grapheme(grapheme: String) -> String {
 
 // --- Luhn ---------------------------------------------------------------
 
-/// Apply the Luhn check to a digit string.
+/// Returns `True` when `digits` passes the Luhn check. Returns `False`
+/// for an empty string or any character other than an ASCII digit, so
+/// call `normalize` first on typed input.
 ///
-/// Returns `False` when `digits` is empty or contains any non-digit
-/// character (`"abc"`, `" "`, `"4242 4242 4242 4242"`, etc.). The
-/// caller can still normalise dynamic input through `normalize`, but
-/// passing un-normalised input is no longer a silent bug — the
-/// previous behaviour treated every non-digit as "skip" and returned
-/// `True` for any all-non-digit input because the partial sum
-/// landed on zero.
-pub fn luhn_valid(digits digits: String) -> Bool {
+/// ## Examples
+///
+/// ```gleam
+/// card.luhn_valid("79927398713")
+/// // -> True
+/// ```
+///
+/// ```gleam
+/// card.luhn_valid("7992 7398 713")
+/// // -> False
+/// ```
+///
+pub fn luhn_valid(digits: String) -> Bool {
   let chars = string.to_graphemes(digits)
   case list.is_empty(chars) || !all_digits(chars) {
     True -> False
@@ -190,25 +213,25 @@ fn digit_value(char: String) -> Result(Int, Nil) {
 
 // --- Brand detection ----------------------------------------------------
 
-/// Detect the brand of a PAN by inspecting its IIN prefix and length.
-/// Returns [`Unknown`](#Brand) when no rule matches.
-pub fn detect_brand(pan pan: String) -> Brand {
-  let normalised = normalize(pan: pan)
-  case digits_only(normalised) {
-    Ok(_) -> classify_brand(normalised)
+/// Returns the brand that the prefix and length of the normalized
+/// number match, without the Luhn check. Use `validate` to check both.
+///
+pub fn detect_brand(pan: String) -> Brand {
+  let normalized = normalize(pan)
+  case digits_only(normalized) {
+    Ok(_) -> classify_brand(normalized)
     Error(InvalidCharacter)
     | Error(EmptyInput)
     | Error(InvalidLength(_))
     | Error(InvalidLuhn)
-    | Error(UnknownBrand)
-    | Error(InvalidExpiry) -> Unknown
+    | Error(UnknownBrand) -> Unknown
   }
 }
 
 fn classify_brand(pan: String) -> Brand {
   let length = string.length(pan)
-  // Order matters: more specific prefixes (UnionPay 62 vs Discover 622)
-  // are checked alongside their length constraints.
+  // UnionPay is checked before Discover, so the co-branded range
+  // 622126-622925 is reported as UnionPay.
   use <- bool.lazy_guard(when: amex_matches(pan, length), return: fn() {
     AmericanExpress
   })
@@ -248,7 +271,6 @@ fn discover_matches(pan: String, length: Int) -> Bool {
   starts_with(pan, "6011")
   || starts_with(pan, "65")
   || prefix_in_range(pan: pan, prefix_len: 3, low: 644, high: 649)
-  || prefix_in_range(pan: pan, prefix_len: 6, low: 622_126, high: 622_925)
 }
 
 fn jcb_matches(pan: String, length: Int) -> Bool {
@@ -257,10 +279,8 @@ fn jcb_matches(pan: String, length: Int) -> Bool {
 }
 
 fn diners_matches(pan: String, length: Int) -> Bool {
-  // Diners Club International numbers per ISO/IEC 7812-1 are 14–19
-  // digits long. Stripe / Braintree publish 16-digit Diners test
-  // PANs (e.g. `3056930009020004`); restricting to length 14 only
-  // wrongly classifies those as `Unknown`.
+  // Diners numbers are 14 to 19 digits; payment providers publish
+  // 16-digit test numbers such as 3056930009020004.
   use <- bool.guard(when: length < 14 || length > 19, return: False)
   prefix_in_range(pan: pan, prefix_len: 3, low: 300, high: 305)
   || starts_with(pan, "36")
@@ -289,8 +309,10 @@ fn prefix_in_range(
   }
 }
 
-/// Render a [`Brand`](#Brand) as a short upper-case identifier.
-pub fn brand_to_string(brand brand: Brand) -> String {
+/// Returns a short upper-case name for the brand, such as `"VISA"` or
+/// `"AMEX"`.
+///
+pub fn brand_to_string(brand: Brand) -> String {
   case brand {
     Visa -> "VISA"
     Mastercard -> "MASTERCARD"
@@ -305,22 +327,32 @@ pub fn brand_to_string(brand brand: Brand) -> String {
 
 // --- Full validation ----------------------------------------------------
 
-/// Normalise the input, verify it contains only digits, check length
-/// and Luhn, and return the detected [`Brand`](#Brand).
-pub fn validate(pan pan: String) -> Result(Brand, ValidationError) {
-  let normalised = normalize(pan: pan)
-  use <- bool.guard(when: normalised == "", return: Error(EmptyInput))
-  use _ <- result.try(digits_only(normalised))
-  let length = string.length(normalised)
+/// Normalizes the number, then checks that it has 12 to 19 digits,
+/// passes the Luhn check and matches a brand.
+///
+/// ## Examples
+///
+/// ```gleam
+/// card.validate("4111 1111 1111 1111")
+/// // -> Ok(card.Visa)
+/// ```
+///
+/// ```gleam
+/// card.validate("4111 1111 1111 1112")
+/// // -> Error(card.InvalidLuhn)
+/// ```
+///
+pub fn validate(pan: String) -> Result(Brand, ValidationError) {
+  let normalized = normalize(pan)
+  use <- bool.guard(when: normalized == "", return: Error(EmptyInput))
+  use _ <- result.try(digits_only(normalized))
+  let length = string.length(normalized)
   use <- bool.guard(
     when: length < 12 || length > 19,
     return: Error(InvalidLength(length: length)),
   )
-  use <- bool.guard(
-    when: !luhn_valid(digits: normalised),
-    return: Error(InvalidLuhn),
-  )
-  case classify_brand(normalised) {
+  use <- bool.guard(when: !luhn_valid(normalized), return: Error(InvalidLuhn))
+  case classify_brand(normalized) {
     Unknown -> Error(UnknownBrand)
     brand -> Ok(brand)
   }
@@ -344,85 +376,32 @@ fn digits_only(pan: String) -> Result(Nil, ValidationError) {
 
 // --- Masking and extraction --------------------------------------------
 
-/// Default [`MaskOptions`](#MaskOptions): keep the first 4 and last 4
-/// digits, mask the rest with `*`, and group output as 4-digit blocks
-/// separated by spaces.
-pub fn default_mask() -> MaskOptions {
-  MaskOptions(
-    keep_first: 4,
-    keep_last: 4,
-    mask_char: "*",
-    group_size: 4,
-    group_separator: " ",
-  )
-}
-
-/// Override the number of leading digits to preserve.
-pub fn with_keep_first(
-  options options: MaskOptions,
-  count count: Int,
-) -> MaskOptions {
-  MaskOptions(..options, keep_first: count)
-}
-
-/// Override the number of trailing digits to preserve.
-pub fn with_keep_last(
-  options options: MaskOptions,
-  count count: Int,
-) -> MaskOptions {
-  MaskOptions(..options, keep_last: count)
-}
-
-/// Override the character used to mask hidden digits.
-pub fn with_mask_char(
-  options options: MaskOptions,
-  char char: String,
-) -> MaskOptions {
-  MaskOptions(..options, mask_char: char)
-}
-
-/// Override the grouping size (set to `0` for no grouping).
-pub fn with_group_size(
-  options options: MaskOptions,
-  size size: Int,
-) -> MaskOptions {
-  MaskOptions(..options, group_size: size)
-}
-
-/// Override the separator inserted between groups.
-pub fn with_group_separator(
-  options options: MaskOptions,
-  separator separator: String,
-) -> MaskOptions {
-  MaskOptions(..options, group_separator: separator)
-}
-
-/// Mask a PAN, preserving the configured number of leading and
-/// trailing digits and grouping the output.
+/// Normalizes the number and hides the middle digits. The shown start,
+/// the hidden middle and the shown end are grouped separately, so a
+/// 15-digit Amex keeps its last 4 digits together.
 ///
-/// Grouping is segment-aware: the kept-first block, the mask block,
-/// and the kept-last block are grouped independently. This keeps the
-/// kept regions intact on irregular-length cards (15-digit AMEX,
-/// 14-digit Diners Club) instead of letting their final digit bleed
-/// into the next group.
+/// ## Examples
+///
+/// ```gleam
+/// card.mask("378282246310005", with: card.default_mask)
+/// // -> Ok("3782 **** *** 0005")
+/// ```
+///
 pub fn mask(
-  pan pan: String,
-  options options: MaskOptions,
+  pan: String,
+  with options: MaskOptions,
 ) -> Result(String, ValidationError) {
-  let normalised = normalize(pan: pan)
-  use <- bool.guard(when: normalised == "", return: Error(EmptyInput))
-  use _ <- result.try(digits_only(normalised))
-  let length = string.length(normalised)
+  let normalized = normalize(pan)
+  use <- bool.guard(when: normalized == "", return: Error(EmptyInput))
+  use _ <- result.try(digits_only(normalized))
+  let length = string.length(normalized)
   let keep_first = clamp(value: options.keep_first, low: 0, high: length)
   let keep_last =
     clamp(value: options.keep_last, low: 0, high: length - keep_first)
   let mask_count = length - keep_first - keep_last
-  let first_block = string.slice(normalised, 0, keep_first)
-  let mask_block = string.repeat(options.mask_char, mask_count)
-  let last_block = string.slice(normalised, length - keep_last, keep_last)
-  // Group size <= 0 disables grouping: emit segments with no
-  // separator so callers asking explicitly for an ungrouped string
-  // get exactly that.
+  let first_block = string.slice(normalized, 0, keep_first)
+  let mask_block = string.repeat(options.mask_character, mask_count)
+  let last_block = string.slice(normalized, length - keep_last, keep_last)
   let separator = case options.group_size <= 0 {
     True -> ""
     False -> options.group_separator
@@ -465,123 +444,81 @@ fn chunks_loop(
   }
 }
 
-/// Extract the last four digits of a PAN.
-pub fn last_four(pan pan: String) -> Result(String, ValidationError) {
-  let normalised = normalize(pan: pan)
-  use <- bool.guard(when: normalised == "", return: Error(EmptyInput))
-  use _ <- result.try(digits_only(normalised))
-  let length = string.length(normalised)
+/// Returns the last 4 digits of the normalized number.
+///
+pub fn last_four(pan: String) -> Result(String, ValidationError) {
+  let normalized = normalize(pan)
+  use <- bool.guard(when: normalized == "", return: Error(EmptyInput))
+  use _ <- result.try(digits_only(normalized))
+  let length = string.length(normalized)
   use <- bool.guard(
     when: length < 4,
     return: Error(InvalidLength(length: length)),
   )
-  Ok(string.slice(normalised, length - 4, 4))
+  Ok(string.slice(normalized, length - 4, 4))
 }
 
-/// Extract the BIN (first six digits) of a PAN.
-pub fn bin(pan pan: String) -> Result(String, ValidationError) {
-  let normalised = normalize(pan: pan)
-  use <- bool.guard(when: normalised == "", return: Error(EmptyInput))
-  use _ <- result.try(digits_only(normalised))
-  let length = string.length(normalised)
+/// Returns the first 6 digits of the normalized number, its bank
+/// identification number.
+///
+pub fn bin(pan: String) -> Result(String, ValidationError) {
+  let normalized = normalize(pan)
+  use <- bool.guard(when: normalized == "", return: Error(EmptyInput))
+  use _ <- result.try(digits_only(normalized))
+  let length = string.length(normalized)
   use <- bool.guard(
     when: length < 6,
     return: Error(InvalidLength(length: length)),
   )
-  Ok(string.slice(normalised, 0, 6))
+  Ok(string.slice(normalized, 0, 6))
 }
 
 // --- Expiry -------------------------------------------------------------
 
-/// Test whether the `expiry` date (`#(month, year)`) is on or after
-/// `today` (`#(month, year)`). The month component of both tuples
-/// must be in `1..=12`.
+/// Returns `True` when a card with this expiry can still be used in the
+/// month `today`, that is when `expiry` is not earlier than `today`.
+/// Returns `False` when either month is outside 1 to 12.
 ///
-/// Tuples are used (rather than four labelled `Int` arguments) so that
-/// the year/month order cannot be silently swapped at the call site.
-pub fn expiry_valid(
-  expiry expiry: #(Int, Int),
-  today today: #(Int, Int),
-) -> Bool {
-  let #(month, year) = expiry
-  let #(today_month, today_year) = today
-  use <- bool.guard(when: month < 1 || month > 12, return: False)
-  use <- bool.guard(when: today_month < 1 || today_month > 12, return: False)
-  use <- bool.guard(when: year > today_year, return: True)
-  use <- bool.guard(when: year < today_year, return: False)
-  month >= today_month
+/// ## Examples
+///
+/// ```gleam
+/// card.expiry_valid(card.Expiry(month: 5, year: 2026), today: card.Expiry(month: 5, year: 2026))
+/// // -> True
+/// ```
+///
+pub fn expiry_valid(expiry: Expiry, today today: Expiry) -> Bool {
+  use <- bool.guard(when: expiry.month < 1 || expiry.month > 12, return: False)
+  use <- bool.guard(when: today.month < 1 || today.month > 12, return: False)
+  use <- bool.guard(when: expiry.year > today.year, return: True)
+  use <- bool.guard(when: expiry.year < today.year, return: False)
+  expiry.month >= today.month
 }
 
-/// Parse a card expiry string into a `#(month, year)` tuple. Accepts
-/// the four common shapes real-world entry forms produce:
+/// Parses an expiry written as `MM/YY`, `MM/YYYY`, `MMYY` or `MMYYYY`,
+/// with `/`, `-` or `.` between the parts. Surrounding whitespace is
+/// ignored, and a two-digit year `YY` means `20YY`. A one-digit month
+/// needs a separator, since `"126"` could be January 2026 or December
+/// 2006.
 ///
-/// - `MM/YY` and `MM/YYYY` (slash) — e.g. `"12/26"`, `"12/2026"`
-/// - `MM-YY` and `MM-YYYY` (hyphen) — e.g. `"12-26"`, `"12-2026"`
-/// - `MM.YY` and `MM.YYYY` (dot) — e.g. `"12.26"`, `"12.2026"`
-/// - `MMYY` and `MMYYYY` (no separator) — e.g. `"1226"`, `"122026"`
+/// ## Examples
 ///
-/// Surrounding whitespace is ignored. Years given as two digits are
-/// expanded by prefixing `20` (so `26` becomes `2026`). Single-digit
-/// months are accepted in the separator forms (`"1/26"`, `"1-26"`,
-/// `"1.26"`) but not in the unseparated form — `"126"` is ambiguous
-/// between "January 2026" and "December year 26" so the parser
-/// refuses to guess and returns `Error(InvalidExpiry)`.
-pub fn parse_expiry(
-  input input: String,
-) -> Result(#(Int, Int), ValidationError) {
-  let trimmed = string.trim(input)
-  case extract_month_year(trimmed) {
-    Ok(#(month_str, year_str)) -> {
-      use month <- result.try(parse_month(month_str))
-      use year <- result.map(parse_year(year_str))
-      #(month, year)
-    }
-    Error(Nil) -> Error(InvalidExpiry)
-  }
+/// ```gleam
+/// card.parse_expiry("12/28")
+/// // -> Ok(card.Expiry(month: 12, year: 2028))
+/// ```
+///
+/// ```gleam
+/// card.parse_expiry("13/28")
+/// // -> Error(Nil)
+/// ```
+///
+pub fn parse_expiry(input: String) -> Result(Expiry, Nil) {
+  use #(month, year) <- result.try(extract_month_year(string.trim(input)))
+  use month <- result.try(parse_month(month))
+  use year <- result.map(parse_year(year))
+  Expiry(month:, year:)
 }
 
-/// Parse a card expiry string using a sliding-window interpretation
-/// for two-digit years. Accepts the same input shapes as
-/// `parse_expiry` (slash, hyphen, dot, unseparated). The difference
-/// is the century rule: a two-digit year `YY` is read as `20YY` if
-/// that interpretation lies within `window_years` of `today`, and as
-/// `19YY` otherwise. Four-digit years pass through unchanged.
-///
-/// `today` is `#(month, year)` with a four-digit year. `window_years`
-/// is the inclusive upper bound on the future side; PCI DSS and
-/// ISO 7813 typically use `50`. Use this entry point when the
-/// expiry might legitimately predate the current century (e.g.
-/// data-archeology use cases) — for routine card capture stay with
-/// `parse_expiry`, which always reads `YY` as `20YY`.
-///
-/// Examples:
-/// - `parse_expiry_with_window(input: "12/26", today: #(5, 2026), window_years: 50)` → `Ok(#(12, 2026))`
-/// - `parse_expiry_with_window(input: "12/76", today: #(5, 2026), window_years: 50)` → `Ok(#(12, 2076))`
-/// - `parse_expiry_with_window(input: "12/76", today: #(5, 2026), window_years: 20)` → `Ok(#(12, 1976))`
-pub fn parse_expiry_with_window(
-  input input: String,
-  today today: #(Int, Int),
-  window_years window_years: Int,
-) -> Result(#(Int, Int), ValidationError) {
-  let trimmed = string.trim(input)
-  case extract_month_year(trimmed) {
-    Ok(#(month_str, year_str)) -> {
-      use month <- result.try(parse_month(month_str))
-      use year <- result.map(parse_year_windowed(
-        s: year_str,
-        today: today,
-        window_years: window_years,
-      ))
-      #(month, year)
-    }
-    Error(Nil) -> Error(InvalidExpiry)
-  }
-}
-
-/// Split a trimmed expiry input into its `MM` and `YY`/`YYYY` parts,
-/// trying the separator shapes first and then the unseparated
-/// `MMYY` / `MMYYYY` forms. Returns the raw substrings; the caller
-/// runs `parse_month` / `parse_year` on each piece.
 fn extract_month_year(trimmed: String) -> Result(#(String, String), Nil) {
   case split_on_first(trimmed, ["/", "-", "."]) {
     Ok(parts) -> Ok(parts)
@@ -616,62 +553,19 @@ fn split_on_first(
   }
 }
 
-fn parse_month(s: String) -> Result(Int, ValidationError) {
-  case int.parse(string.trim(s)) {
-    Ok(m) if m >= 1 && m <= 12 -> Ok(m)
-    _ -> Error(InvalidExpiry)
+fn parse_month(text: String) -> Result(Int, Nil) {
+  case int.parse(string.trim(text)) {
+    Ok(month) if month >= 1 && month <= 12 -> Ok(month)
+    _ -> Error(Nil)
   }
 }
 
-fn parse_year(s: String) -> Result(Int, ValidationError) {
-  let trimmed = string.trim(s)
-  let length = string.length(trimmed)
-  use <- bool.guard(
-    when: length != 2 && length != 4,
-    return: Error(InvalidExpiry),
-  )
-  case int.parse(trimmed) {
-    Ok(y) if y < 0 -> Error(InvalidExpiry)
-    Ok(y) if length == 4 -> Ok(y)
-    Ok(y) -> Ok(2000 + y)
-    Error(Nil) -> Error(InvalidExpiry)
-  }
-}
-
-/// Like `parse_year` but applies a sliding-window century rule to
-/// two-digit years. Four-digit years pass through unchanged.
-fn parse_year_windowed(
-  s s: String,
-  today today: #(Int, Int),
-  window_years window_years: Int,
-) -> Result(Int, ValidationError) {
-  let trimmed = string.trim(s)
-  let length = string.length(trimmed)
-  use <- bool.guard(
-    when: length != 2 && length != 4,
-    return: Error(InvalidExpiry),
-  )
-  case int.parse(trimmed) {
-    Ok(y) if y < 0 -> Error(InvalidExpiry)
-    Ok(y) if length == 4 -> Ok(y)
-    Ok(y) -> Ok(window_century(yy: y, today: today, window: window_years))
-    Error(Nil) -> Error(InvalidExpiry)
-  }
-}
-
-/// Decide between `20YY` and `19YY` for a two-digit `yy` using a
-/// sliding window anchored at `today`. The `20YY` interpretation is
-/// preferred whenever it does not exceed `today_year + window`; once
-/// it does, the year is read as `19YY`.
-fn window_century(
-  yy yy: Int,
-  today today: #(Int, Int),
-  window window: Int,
-) -> Int {
-  let #(_today_month, today_year) = today
-  let candidate_20 = 2000 + yy
-  case candidate_20 <= today_year + window {
-    True -> candidate_20
-    False -> 1900 + yy
+fn parse_year(text: String) -> Result(Int, Nil) {
+  let trimmed = string.trim(text)
+  case string.length(trimmed), int.parse(trimmed) {
+    _, Ok(year) if year < 0 -> Error(Nil)
+    4, Ok(year) -> Ok(year)
+    2, Ok(year) -> Ok(2000 + year)
+    _, _ -> Error(Nil)
   }
 }
