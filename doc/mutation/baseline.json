@@ -475,7 +475,7 @@
 {"file":"src/finanza/internal/tvm.gleam","line":293,"column":13,"function":"exact_power","mutator":"<= -> <","text":"case periods <= 0 {","status":"KILLED"},
 {"file":"src/finanza/internal/tvm.gleam","line":295,"column":35,"function":"exact_power","mutator":"- -> +","text":"False -> exact_power(base, periods - 1, rounded.times(value, base))","status":"KILLED"},
 {"file":"src/finanza/internal/tvm.gleam","line":312,"column":54,"function":"power","mutator":"False -> True","text":"let low = power_loop(base, periods, start, precision, False)","status":"KILLED"},
-{"file":"src/finanza/internal/tvm.gleam","line":315,"column":21,"function":"power","mutator":"* -> /","text":"..rounded.from_int(2 * periods),","status":"KILLED"},
+{"file":"src/finanza/internal/tvm.gleam","line":315,"column":21,"function":"power","mutator":"* -> /","text":"..rounded.from_int(2 * periods),","status":"LIVED"},
 {"file":"src/finanza/internal/tvm.gleam","line":316,"column":13,"function":"power","mutator":"* -> /","text":"exponent: -7 * { precision - 1 },","status":"KILLED"},
 {"file":"src/finanza/internal/tvm.gleam","line":316,"column":27,"function":"power","mutator":"- -> +","text":"exponent: -7 * { precision - 1 },","status":"KILLED"},
 {"file":"src/finanza/internal/tvm.gleam","line":322,"column":58,"function":"power","mutator":"True -> False","text":"rounded.truncate(rounded.times(low, slack), limbs: 2, up: True),","status":"LIVED"},
