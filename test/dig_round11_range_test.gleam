@@ -12,7 +12,6 @@ import gleam/result
 import gleam/string
 import metamon
 import metamon/generator
-import metamon/generator/range
 
 import finanza/decimal
 import finanza/interest
@@ -67,10 +66,10 @@ pub fn new_matches_the_range_model_test() {
   metamon.forall(
     generator.tuple2(
       generator.one_of([
-        generator.int(range.constant(-1000, 1000)),
+        generator.int(generator.range(from: -1000, to: 1000)),
         generator.element_of([0, 1, -1, 9, max, 0 - max]),
       ]),
-      generator.int(range.constant(-40, 25)),
+      generator.int(generator.range(from: -40, to: 25)),
     ),
     fn(input) {
       let #(coefficient, exponent) = input
@@ -78,7 +77,7 @@ pub fn new_matches_the_range_model_test() {
         exponent >= -28
         && exponent <= 15
         && int.absolute_value(coefficient) * pow10(int.max(exponent, 0)) <= max
-      result.is_ok(decimal.new(coefficient:, exponent:)) == fits
+      assert result.is_ok(decimal.new(coefficient:, exponent:)) == fits
     },
   )
 }
@@ -156,15 +155,15 @@ pub fn in_range_values_round_trip_through_text_test() {
   metamon.forall(
     generator.tuple2(
       generator.one_of([
-        generator.int(range.constant(0 - max, max)),
-        generator.int(range.constant(-1000, 1000)),
+        generator.int(generator.range(from: 0 - max, to: max)),
+        generator.int(generator.range(from: -1000, to: 1000)),
       ]),
-      generator.int(range.constant(-28, 0)),
+      generator.int(generator.range(from: -28, to: 0)),
     ),
     fn(input) {
       let #(coefficient, exponent) = input
       let value = support.new(coefficient:, exponent:)
-      decimal.parse(decimal.to_string(value)) == Ok(value)
+      assert decimal.parse(decimal.to_string(value)) == Ok(value)
     },
   )
 }
@@ -174,16 +173,14 @@ pub fn in_range_values_round_trip_through_text_test() {
 pub fn positive_exponents_round_trip_by_value_test() {
   metamon.forall(
     generator.tuple2(
-      generator.int(range.constant(-9, 9)),
-      generator.int(range.constant(0, 15)),
+      generator.int(generator.range(from: -9, to: 9)),
+      generator.int(generator.range(from: 0, to: 15)),
     ),
     fn(input) {
       let #(coefficient, exponent) = input
       let value = support.new(coefficient:, exponent:)
-      case decimal.parse(decimal.to_string(value)) {
-        Ok(parsed) -> decimal.equal(parsed, value)
-        Error(_) -> False
-      }
+      let assert Ok(parsed) = decimal.parse(decimal.to_string(value))
+      assert decimal.equal(parsed, value)
     },
   )
 }
@@ -194,8 +191,8 @@ pub fn positive_exponents_round_trip_by_value_test() {
 pub fn scientific_notation_matches_the_range_model_test() {
   metamon.forall(
     generator.tuple2(
-      generator.int(range.constant(-99, 99)),
-      generator.int(range.constant(-60, 40)),
+      generator.int(generator.range(from: -99, to: 99)),
+      generator.int(generator.range(from: -60, to: 40)),
     ),
     fn(input) {
       let #(coefficient, exponent) = input
@@ -204,7 +201,7 @@ pub fn scientific_notation_matches_the_range_model_test() {
         coefficient == 0
         || exponent + trailing_zeros(coefficient) >= -28
         && int.absolute_value(coefficient) * pow10(int.max(exponent, 0)) <= max
-      result.is_ok(decimal.parse(source)) == fits
+      assert result.is_ok(decimal.parse(source)) == fits
     },
   )
 }
@@ -223,10 +220,13 @@ pub fn accepted_inputs_render_short_text_test() {
   metamon.forall(
     generator.tuple4(
       generator.element_of(["", "-", "+"]),
-      generator.string_digit(range.constant(1, 40)),
+      generator.string(
+        of: generator.Digits,
+        length: generator.range(from: 1, to: 40),
+      ),
       generator.element_of(["", ".", ".5", ".000"]),
       generator.one_of([
-        generator.int(range.constant(-40, 40)),
+        generator.int(generator.range(from: -40, to: 40)),
         generator.element_of([
           -1_000_000_000,
           1_000_000_000,
@@ -240,9 +240,12 @@ pub fn accepted_inputs_render_short_text_test() {
       let #(sign, digits, fraction, exponent) = input
       let source = sign <> digits <> fraction <> "e" <> int.to_string(exponent)
       case decimal.parse(source) {
-        Ok(value) -> string.length(decimal.to_string(value)) <= 31
-        Error(decimal.ParsedValueTooLarge) -> True
-        Error(_) -> False
+        Ok(value) -> {
+          assert string.length(decimal.to_string(value)) <= 31
+        }
+        Error(error) -> {
+          assert error == decimal.ParsedValueTooLarge
+        }
       }
     },
   )
@@ -470,14 +473,14 @@ pub fn divide_still_fails_when_the_quotient_is_out_of_range_test() {
 pub fn divide_matches_a_big_integer_oracle_test() {
   metamon.forall(
     generator.tuple6(
-      generator.int(range.constant(0 - max, max)),
-      generator.int(range.constant(-28, 0)),
+      generator.int(generator.range(from: 0 - max, to: max)),
+      generator.int(generator.range(from: -28, to: 0)),
       generator.one_of([
-        generator.int(range.constant(1, max)),
-        generator.int(range.constant(1, 1000)),
+        generator.int(generator.range(from: 1, to: max)),
+        generator.int(generator.range(from: 1, to: 1000)),
       ]),
-      generator.int(range.constant(-28, 0)),
-      generator.int(range.constant(0, 28)),
+      generator.int(generator.range(from: -28, to: 0)),
+      generator.int(generator.range(from: 0, to: 28)),
       generator.element_of([
         decimal.HalfEven,
         decimal.HalfUp,
@@ -504,10 +507,7 @@ pub fn divide_matches_a_big_integer_oracle_test() {
           digits:,
           rounding: mode,
         )
-      case expected {
-        Ok(value) -> actual == Ok(value)
-        Error(Nil) -> actual == Error(decimal.PrecisionExceeded)
-      }
+      assert actual == result.replace_error(expected, decimal.PrecisionExceeded)
     },
   )
 }
@@ -590,17 +590,21 @@ pub fn allocate_rejects_ratios_whose_sum_is_out_of_range_test() {
 pub fn allocate_parts_add_up_near_2_53_test() {
   metamon.forall(
     generator.tuple2(
-      generator.int(range.constant(max - 1_000_000, max)),
+      generator.int(generator.range(from: max - 1_000_000, to: max)),
       generator.list_of(
-        generator.int(range.constant(0, 1_000_000_000)),
-        range.constant(1, 6),
+        generator.int(generator.range(from: 0, to: 1_000_000_000)),
+        length: generator.range(from: 1, to: 6),
       ),
     ),
     fn(input) {
       let #(units, ratios) = input
       case allocate_units(units, ratios) {
-        Ok(parts) -> int.sum(parts) == units
-        Error(Nil) -> list.all(ratios, fn(ratio) { ratio == 0 })
+        Ok(parts) -> {
+          assert int.sum(parts) == units
+        }
+        Error(Nil) -> {
+          assert list.all(ratios, fn(ratio) { ratio == 0 })
+        }
       }
     },
   )

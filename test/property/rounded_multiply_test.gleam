@@ -8,7 +8,6 @@
 
 import metamon
 import metamon/generator.{type Generator}
-import metamon/generator/range
 
 import finanza/decimal
 import finanza/internal/rounded
@@ -33,7 +32,7 @@ fn input_generator() -> Generator(
   generator.tuple4(
     decimal_multiply_test.decimal_generator(),
     decimal_multiply_test.decimal_generator(),
-    generator.int(range.constant(-15, 28)),
+    generator.int(generator.range(from: -15, to: 28)),
     mode_generator(),
   )
 }
@@ -43,30 +42,31 @@ fn input_generator() -> Generator(
 /// many places. Runs on both targets.
 pub fn rounded_product_matches_round_of_the_exact_product_test() {
   metamon.forall_with(
-    metamon.with_runs_or_panic(metamon.default_config(), 2000),
+    metamon.Config(..metamon.default_config(), runs: 2000),
     input_generator(),
     fn(input) {
       let #(a, b, digits, mode) = input
       let actual = rounded.multiply(a, b, digits:, rounding: mode)
       case decimal.multiply(a, b) {
-        Error(_) -> True
+        Error(_) -> Nil
         Ok(exact) -> {
           let expected = decimal.round(exact, digits:, rounding: mode)
           let currency = money.Currency(..money.usd, exponent: digits)
-          let via_money = case digits >= 0 {
-            True ->
-              money.multiply(
-                money.Money(amount: a, currency:),
-                by: b,
-                rounding: mode,
-              )
-              == case expected {
-                Ok(amount) -> Ok(money.Money(amount:, currency:))
-                Error(error) -> Error(money.ArithmeticFailed(error))
-              }
-            False -> True
+          assert actual == expected
+          case digits >= 0 {
+            True -> {
+              assert money.multiply(
+                  money.Money(amount: a, currency:),
+                  by: b,
+                  rounding: mode,
+                )
+                == case expected {
+                  Ok(amount) -> Ok(money.Money(amount:, currency:))
+                  Error(error) -> Error(money.ArithmeticFailed(error))
+                }
+            }
+            False -> Nil
           }
-          actual == expected && via_money
         }
       }
     },
@@ -136,7 +136,7 @@ fn pow10(n: Int) -> Int {
 @target(erlang)
 pub fn rounded_product_matches_the_bignum_oracle_test() {
   metamon.forall_with(
-    metamon.with_runs_or_panic(metamon.default_config(), 2000),
+    metamon.Config(..metamon.default_config(), runs: 2000),
     input_generator(),
     fn(input) {
       let #(a, b, digits, mode) = input
@@ -144,7 +144,7 @@ pub fn rounded_product_matches_the_bignum_oracle_test() {
         Ok(value) -> Ok(#(decimal.coefficient(value), decimal.exponent(value)))
         Error(_) -> Error(Nil)
       }
-      actual == oracle(a, b, digits, mode)
+      assert actual == oracle(a, b, digits, mode)
     },
   )
 }

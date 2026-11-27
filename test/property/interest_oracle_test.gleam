@@ -24,9 +24,8 @@ import gleam/order
 import metamon
 @target(erlang)
 import metamon/generator.{type Generator}
-@target(erlang)
-import metamon/generator/range
 
+@target(erlang)
 /// The first case the oracle found against 0.13.4, on both targets: the
 /// exact payment is 43787710.37029200000…00019 (140 zeros), and 0.13.4,
 /// which kept about 16 significant digits, rounded it otherwise.
@@ -166,16 +165,19 @@ fn make(coefficient: Int, exponent: Int) -> decimal.Decimal {
 fn amount_generator() -> Generator(decimal.Decimal) {
   generator.one_of([
     generator.map2(
-      generator.int(range.constant(0, 1_000_000_000)),
-      generator.int(range.constant(-2, 0)),
+      generator.int(generator.range(from: 0, to: 1_000_000_000)),
+      generator.int(generator.range(from: -2, to: 0)),
       make,
     ),
     generator.map2(
-      generator.int(range.constant(0, max)),
-      generator.int(range.constant(-6, 0)),
+      generator.int(generator.range(from: 0, to: max)),
+      generator.int(generator.range(from: -6, to: 0)),
       make,
     ),
-    generator.map(generator.int(range.constant(0, 100_000)), make(_, -2)),
+    generator.map(generator.int(generator.range(from: 0, to: 100_000)), make(
+      _,
+      -2,
+    )),
   ])
 }
 
@@ -184,25 +186,31 @@ fn rate_generator() -> Generator(decimal.Decimal) {
   generator.one_of([
     // Monthly rates of 0.01% to 20% a year, at 10 to 16 places.
     generator.map2(
-      generator.int(range.constant(1, 2000)),
-      generator.int(range.constant(10, 16)),
+      generator.int(generator.range(from: 1, to: 2000)),
+      generator.int(generator.range(from: 10, to: 16)),
       fn(basis_points, places) {
         make(basis_points * pow10(places) / 120_000, 0 - places)
       },
     ),
     generator.map2(
-      generator.int(range.constant(-9999, 99_999)),
-      generator.int(range.constant(4, 6)),
+      generator.int(generator.range(from: -9999, to: 99_999)),
+      generator.int(generator.range(from: 4, to: 6)),
       fn(c, places) { make(c, 0 - places) },
     ),
-    generator.map(generator.int(range.constant(1, max / 10)), make(_, -16)),
-    generator.map(generator.int(range.constant(1, 1000)), make(_, -28)),
+    generator.map(generator.int(generator.range(from: 1, to: max / 10)), make(
+      _,
+      -16,
+    )),
+    generator.map(generator.int(generator.range(from: 1, to: 1000)), make(
+      _,
+      -28,
+    )),
   ])
 }
 
 @target(erlang)
 fn config() {
-  metamon.with_runs_or_panic(metamon.default_config(), 300)
+  metamon.Config(..metamon.default_config(), runs: 300)
 }
 
 @target(erlang)
@@ -210,8 +218,8 @@ fn inputs() {
   generator.tuple4(
     amount_generator(),
     rate_generator(),
-    generator.int(range.constant(1, 400)),
-    generator.int(range.constant(0, 10)),
+    generator.int(generator.range(from: 1, to: 400)),
+    generator.int(generator.range(from: 0, to: 10)),
   )
 }
 
@@ -224,7 +232,8 @@ pub fn simple_matches_the_exact_oracle_test() {
         multiply(multiply(of(principal), of(rate)), integer(periods)),
         digits,
       )
-    parts(interest.simple(principal:, rate:, periods:, digits:)) == expected
+    assert parts(interest.simple(principal:, rate:, periods:, digits:))
+      == expected
   })
 }
 
@@ -234,13 +243,13 @@ pub fn future_value_matches_the_exact_oracle_test() {
     let #(present, rate, periods, digits) = input
     let growth = raise(add(integer(1), of(rate)), periods)
     let expected = round(multiply(of(present), growth), digits)
-    parts(interest.future_value(
-      present:,
-      rate_per_period: rate,
-      periods:,
-      digits:,
-    ))
-    == expected
+    assert parts(interest.future_value(
+        present:,
+        rate_per_period: rate,
+        periods:,
+        digits:,
+      ))
+      == expected
   })
 }
 
@@ -253,13 +262,13 @@ pub fn present_value_matches_the_exact_oracle_test() {
       Ok(value) -> round(value, digits)
       Error(Nil) -> Error(interest.ArithmeticFailed(decimal.DivisionByZero))
     }
-    parts(interest.present_value(
-      future:,
-      rate_per_period: rate,
-      periods:,
-      digits:,
-    ))
-    == expected
+    assert parts(interest.present_value(
+        future:,
+        rate_per_period: rate,
+        periods:,
+        digits:,
+      ))
+      == expected
   })
 }
 
@@ -285,8 +294,13 @@ pub fn payment_matches_the_exact_oracle_test() {
       False, Error(Nil) ->
         Error(interest.ArithmeticFailed(decimal.DivisionByZero))
     }
-    parts(interest.payment(principal:, rate_per_period: rate, periods:, digits:))
-    == expected
+    assert parts(interest.payment(
+        principal:,
+        rate_per_period: rate,
+        periods:,
+        digits:,
+      ))
+      == expected
   })
 }
 
@@ -296,20 +310,20 @@ pub fn effective_annual_rate_matches_the_exact_oracle_test() {
     config(),
     generator.tuple3(
       rate_generator(),
-      generator.int(range.constant(1, 1200)),
-      generator.int(range.constant(0, 14)),
+      generator.int(generator.range(from: 1, to: 1200)),
+      generator.int(generator.range(from: 0, to: 14)),
     ),
     fn(input) {
       let #(nominal, compounds, digits) = input
       let assert Ok(per_period) = divide(of(nominal), integer(compounds))
       let growth = raise(add(integer(1), per_period), compounds)
       let expected = round(add(growth, integer(-1)), digits)
-      parts(interest.effective_annual_rate(
-        nominal_rate: nominal,
-        compounds_per_year: compounds,
-        digits:,
-      ))
-      == expected
+      assert parts(interest.effective_annual_rate(
+          nominal_rate: nominal,
+          compounds_per_year: compounds,
+          digits:,
+        ))
+        == expected
     },
   )
 }
@@ -397,9 +411,9 @@ fn tie_rate() -> Generator(decimal.Decimal) {
 @target(erlang)
 fn tie_amount() -> Generator(decimal.Decimal) {
   generator.map3(
-    generator.int(range.constant(0, 99_999)),
+    generator.int(generator.range(from: 0, to: 99_999)),
     generator.element_of([1, 5, 25, 125, 375, 1024]),
-    generator.int(range.constant(-8, 0)),
+    generator.int(generator.range(from: -8, to: 0)),
     fn(c, factor, exponent) { make({ 2 * c + 1 } * factor, exponent) },
   )
 }
@@ -410,10 +424,10 @@ fn tie_inputs() {
     tie_amount(),
     tie_rate(),
     generator.one_of([
-      generator.int(range.constant(1, 25)),
-      generator.int(range.constant(1, 1200)),
+      generator.int(generator.range(from: 1, to: 25)),
+      generator.int(generator.range(from: 1, to: 1200)),
     ]),
-    generator.int(range.constant(0, 28)),
+    generator.int(generator.range(from: 0, to: 28)),
   )
 }
 
@@ -436,11 +450,16 @@ fn agrees(
   fallback: Int,
   compute: fn(Int) -> Result(decimal.Decimal, interest.InterestError),
   value: tvm.Value,
-) -> Bool {
+) -> Nil {
   let #(digits, short) = tie_digits(exact, fallback)
   let expected = round(exact, digits)
-  parts(compute(digits)) == expected
-  && { !short || exact_parts(value.exact(digits)) == expected }
+  assert parts(compute(digits)) == expected
+  case short {
+    True -> {
+      assert exact_parts(value.exact(digits)) == expected
+    }
+    False -> Nil
+  }
 }
 
 @target(erlang)
@@ -517,18 +536,18 @@ pub fn effective_annual_rate_ties_match_the_exact_oracle_test() {
     config(),
     generator.tuple3(
       generator.map2(
-        generator.int(range.constant(-100, 4000)),
-        generator.int(range.constant(-2, 0)),
+        generator.int(generator.range(from: -100, to: 4000)),
+        generator.int(generator.range(from: -2, to: 0)),
         fn(c, exponent) { make(int.max(c, -100), exponent) },
       )
         |> generator.filter(fn(nominal) {
           decimal.compare(nominal, decimal.negate(decimal.one())) != order.Lt
         }),
       generator.one_of([
-        generator.int(range.constant(1, 29)),
-        generator.int(range.constant(1, 1200)),
+        generator.int(generator.range(from: 1, to: 29)),
+        generator.int(generator.range(from: 1, to: 1200)),
       ]),
-      generator.int(range.constant(0, 28)),
+      generator.int(generator.range(from: 0, to: 28)),
     ),
     fn(input) {
       let #(nominal, compounds, fallback) = input
@@ -555,7 +574,7 @@ pub fn effective_annual_rate_ties_match_the_exact_oracle_test() {
 /// The tie inputs do make ties: at least a tenth of them for
 /// `future_value` and `present_value`.
 pub fn the_tie_inputs_make_ties_test() {
-  let samples = generator.sample(tie_inputs(), 500)
+  let samples = generator.sample(tie_inputs(), count: 500, seed: 42)
   let future =
     list.count(samples, fn(input) {
       let #(present, rate, periods, _) = input

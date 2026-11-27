@@ -876,3 +876,37 @@ pub fn dividing_with_an_out_of_range_divisor_scale_rounds_test() -> Nil {
     ))
     == Ok("0")
 }
+
+// --- Boundaries found by mutation testing ---------------------------------
+
+pub fn parse_rejects_a_sign_after_a_digit_test() -> Nil {
+  assert decimal.parse("1-2") == Error(decimal.MultipleSigns)
+}
+
+pub fn parse_keeps_a_trailing_zero_up_to_2_53_test() -> Nil {
+  let assert Ok(value) = decimal.parse("9007199254740990")
+  assert decimal.coefficient(value) == 9_007_199_254_740_990
+  assert decimal.exponent(value) == 0
+}
+
+pub fn to_int_scales_a_positive_exponent_test() -> Nil {
+  assert decimal.to_int(support.new(coefficient: 5, exponent: 2)) == Ok(500)
+}
+
+pub fn to_int_accepts_15_places_test() -> Nil {
+  let value = support.new(coefficient: 1_000_000_000_000_000, exponent: -15)
+  assert decimal.to_int(value) == Ok(1)
+}
+
+pub fn multiply_drops_15_trailing_zeros_at_the_smallest_exponent_test() -> Nil {
+  let a = support.new(coefficient: 1_000_000_000_000_000, exponent: -28)
+  let b = support.new(coefficient: 1, exponent: -15)
+  assert decimal.multiply(a, b)
+    == Ok(support.new(coefficient: 1, exponent: -28))
+}
+
+pub fn add_scales_by_15_places_test() -> Nil {
+  let b = support.new(coefficient: 1, exponent: -15)
+  assert decimal.add(decimal.one(), b)
+    == Ok(support.new(coefficient: 1_000_000_000_000_001, exponent: -15))
+}

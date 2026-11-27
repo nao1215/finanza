@@ -16,7 +16,6 @@ import gleam/order
 import gleam/string
 import metamon
 import metamon/generator
-import metamon/generator/range
 
 @target(erlang)
 import finanza/decimal
@@ -31,12 +30,12 @@ import property/decimal_multiply_test
 /// for dividends far past 2^53.
 pub fn limb_divide_multiplies_back_test() {
   metamon.forall_with(
-    metamon.with_runs_or_panic(metamon.default_config(), 1000),
+    metamon.Config(..metamon.default_config(), runs: 1000),
     generator.tuple4(
-      generator.int(range.constant(0, 9_007_199_254_740_991)),
-      generator.int(range.constant(0, 9_007_199_254_740_991)),
-      generator.int(range.constant(1, 9_007_199_254_740_991)),
-      generator.int(range.constant(0, 40)),
+      generator.int(generator.range(from: 0, to: 9_007_199_254_740_991)),
+      generator.int(generator.range(from: 0, to: 9_007_199_254_740_991)),
+      generator.int(generator.range(from: 1, to: 9_007_199_254_740_991)),
+      generator.int(generator.range(from: 0, to: 40)),
     ),
     fn(input) {
       let #(x, y, z, zeros) = input
@@ -44,8 +43,8 @@ pub fn limb_divide_multiplies_back_test() {
       let b = limb.multiply(limb.limbs(z), limb.limbs(y + 1))
       let #(quotient, remainder) = limb.divide(a, b)
       let back = limb.add(#(1, limb.multiply(quotient, b)), #(1, remainder)).1
-      limb.compare_values(back, a) == order.Eq
-      && limb.compare_values(remainder, b) == order.Lt
+      assert limb.compare_values(back, a) == order.Eq
+      assert limb.compare_values(remainder, b) == order.Lt
     },
   )
 }
@@ -56,9 +55,9 @@ fn edge_limbs() {
   generator.list_of(
     generator.one_of([
       generator.element_of([0, 1, 2, 4_999_999, 5_000_000, 9_999_998, 9_999_999]),
-      generator.int(range.constant(0, 9_999_999)),
+      generator.int(generator.range(from: 0, to: 9_999_999)),
     ]),
-    range.constant(1, 14),
+    length: generator.range(from: 1, to: 14),
   )
 }
 
@@ -77,11 +76,11 @@ fn divides_back(a: List(Int), b: List(Int)) -> Bool {
 /// limb estimated in floating point can come out one too low.
 pub fn limb_divide_handles_edge_limbs_test() {
   metamon.forall_with(
-    metamon.with_runs_or_panic(metamon.default_config(), 2000),
+    metamon.Config(..metamon.default_config(), runs: 2000),
     generator.tuple3(
       edge_limbs(),
       edge_limbs(),
-      generator.int(range.constant(1, 9_999_999)),
+      generator.int(generator.range(from: 1, to: 9_999_999)),
     ),
     fn(input) {
       let #(a, b, times) = input
@@ -90,10 +89,10 @@ pub fn limb_divide_handles_edge_limbs_test() {
         b -> b
       }
       let multiple = limb.multiply(b, [times])
-      divides_back(a, b)
-      && limb.divide(limb.multiply(multiple, b), b)
-      == #(limb.trim(multiple), [])
-      && limb.divide(multiple, b) == #([times], [])
+      assert divides_back(a, b)
+      assert limb.divide(limb.multiply(multiple, b), b)
+        == #(limb.trim(multiple), [])
+      assert limb.divide(multiple, b) == #([times], [])
     },
   )
 }
@@ -262,7 +261,7 @@ fn combined(a, b, c) -> Number {
 
 @target(erlang)
 fn config() {
-  metamon.with_runs_or_panic(metamon.default_config(), 1000)
+  metamon.Config(..metamon.default_config(), runs: 1000)
 }
 
 @target(erlang)
@@ -271,7 +270,7 @@ pub fn round_matches_the_bignum_oracle_test() {
     config(),
     generator.tuple3(
       triples(),
-      generator.int(range.constant(-16, 29)),
+      generator.int(generator.range(from: -16, to: 29)),
       mode_generator(),
     ),
     fn(input) {
@@ -282,7 +281,7 @@ pub fn round_matches_the_bignum_oracle_test() {
         True -> Error(Nil)
         False -> oracle_round(numerator, denominator, digits, mode)
       }
-      parts(rounded.round(value, digits:, rounding: mode)) == expected
+      assert parts(rounded.round(value, digits:, rounding: mode)) == expected
     },
   )
 }
@@ -293,13 +292,13 @@ pub fn divide_round_matches_the_bignum_oracle_test() {
     config(),
     generator.tuple3(
       triples(),
-      generator.int(range.constant(-15, 28)),
+      generator.int(generator.range(from: -15, to: 28)),
       mode_generator(),
     ),
     fn(input) {
       let #(#(a, b, c), digits, mode) = input
       case decimal.is_zero(c) {
-        True -> True
+        True -> Nil
         False -> {
           let top = combined(a, b, b)
           let bottom = rounded.from_decimal(c)
@@ -309,8 +308,13 @@ pub fn divide_round_matches_the_bignum_oracle_test() {
             True -> #(0 - tn * bd, 0 - td * bn)
             False -> #(tn * bd, td * bn)
           }
-          parts(rounded.divide_round(top, bottom, digits:, rounding: mode))
-          == oracle_round(numerator, denominator, digits, mode)
+          assert parts(rounded.divide_round(
+              top,
+              bottom,
+              digits:,
+              rounding: mode,
+            ))
+            == oracle_round(numerator, denominator, digits, mode)
         }
       }
     },
@@ -327,27 +331,26 @@ fn at_most(a: #(Int, Int), b: #(Int, Int)) -> Bool {
 pub fn quotient_and_truncate_bound_the_exact_value_test() {
   metamon.forall_with(
     config(),
-    generator.tuple2(triples(), generator.int(range.constant(1, 6))),
+    generator.tuple2(triples(), generator.int(generator.range(from: 1, to: 6))),
     fn(input) {
       let #(#(a, b, c), precision) = input
       let value = rounded.absolute(combined(a, b, c))
       let divisor = rounded.absolute(rounded.from_decimal(b))
       let exact = fraction(value)
-      let truncated =
-        at_most(
-          fraction(rounded.truncate(value, limbs: precision, up: False)),
-          exact,
-        )
-        && at_most(
-          exact,
-          fraction(rounded.truncate(value, limbs: precision, up: True)),
-        )
-        && list.length(
+      assert at_most(
+        fraction(rounded.truncate(value, limbs: precision, up: False)),
+        exact,
+      )
+      assert at_most(
+        exact,
+        fraction(rounded.truncate(value, limbs: precision, up: True)),
+      )
+      assert list.length(
           rounded.truncate(value, limbs: precision, up: False).limbs,
         )
         <= precision
-      let divided = case rounded.is_zero(divisor) {
-        True -> True
+      case rounded.is_zero(divisor) {
+        True -> Nil
         False -> {
           let #(vn, vd) = exact
           let #(dn, dd) = fraction(divisor)
@@ -356,10 +359,10 @@ pub fn quotient_and_truncate_bound_the_exact_value_test() {
             rounded.quotient(value, divisor, limbs: precision, up: False)
           let high =
             rounded.quotient(value, divisor, limbs: precision, up: True)
-          at_most(fraction(low), quotient) && at_most(quotient, fraction(high))
+          assert at_most(fraction(low), quotient)
+          assert at_most(quotient, fraction(high))
         }
       }
-      truncated && divided
     },
   )
 }
@@ -369,17 +372,18 @@ pub fn limb_divide_matches_integer_division_test() {
   metamon.forall_with(
     config(),
     generator.tuple4(
-      generator.int(range.constant(0, 9_007_199_254_740_991)),
-      generator.int(range.constant(0, 9_007_199_254_740_991)),
-      generator.int(range.constant(1, 9_007_199_254_740_991)),
-      generator.int(range.constant(0, 40)),
+      generator.int(generator.range(from: 0, to: 9_007_199_254_740_991)),
+      generator.int(generator.range(from: 0, to: 9_007_199_254_740_991)),
+      generator.int(generator.range(from: 1, to: 9_007_199_254_740_991)),
+      generator.int(generator.range(from: 0, to: 40)),
     ),
     fn(input) {
       let #(x, y, z, zeros) = input
       let a = x * y * pow10(zeros) + y
       let b = z * { y + 1 }
       let #(quotient, remainder) = limb.divide(limbs_of(a), limbs_of(b))
-      value_of(quotient) == a / b && value_of(remainder) == a % b
+      assert value_of(quotient) == a / b
+      assert value_of(remainder) == a % b
     },
   )
 }

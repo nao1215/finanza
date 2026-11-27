@@ -24,22 +24,30 @@ There is no coverage-guided fuzzer for Gleam. `test/dig_round4_fuzzing_test.glea
 
 ## Nightly runs
 
-`.github/workflows/nightly-property.yml` runs the whole suite ten times with `METAMON_RUNS_MULTIPLIER=10`, each pass with a new seed. A failure report prints its seed, so the case can be replayed with `metamon.with_seed` and kept as a regression test.
+`.github/workflows/nightly-property.yml` runs the whole suite ten times with `METAMON_RUNS_MULTIPLIER=10`, each pass with a new seed. A failure report prints its seed, so the case can be replayed with `Config(..default_config(), seed: Some(seed))` and kept as a regression test.
 
 ## Mutation testing
 
-There is no mutation testing tool for Gleam, so `gleam_mutate.py` (from the mutation-testing lab in nao1215/debimate) is run by hand on a copy of the project. It rewrites one operator or boolean result at a time and runs `gleam test` on the Erlang target; a mutant that makes the suite hang past 120 seconds counts as killed. For this run the script also mutated integer comparisons and `+` / `-`. The score is killed / (killed + lived).
+`gleam run -m metamon/mutation` changes one operator, `!` or boolean literal in a module under `src/` at a time and runs `gleam test --target erlang` on each change. `.github/workflows/mutation.yml` mutates the modules a pull request changes and fails on a survivor that `doc/mutation/baseline.json` does not list; the weekly run mutates every module. `just mutation` runs everything and `just mutation-record` writes the baseline.
 
-| Date | Files | Killed | Lived | Score |
-|---|---|---:|---:|---:|
-| 2026-11-19, first run | every module under `src/` with mutants (260) | 205 | 55 | 78.8% |
-| 2026-11-19, after the brand boundary test | same | 218 | 42 | 83.8% |
+The first run (2026-11-27) scored 79.6%. Tests were then added for `validate` at 12 and 19 digits, `mask` when the kept digits cover the whole number, January and an invalid current month in `expiry_valid` and `parse_expiry`, a sign after a digit, a trailing zero just below 2^53, `to_int` with a positive exponent and with 15 places, a product that drops 15 trailing zeros, a sum scaled by 15 places, an `allocate` share that wraps the ratio total, adding a zero with more places, `present_value` at a rate of -1 over zero periods and `effective_annual_rate` with zero compounds, and the score rose to 82.8%. The 91 survivors left change nothing that a caller can see:
 
-The first run showed that brand detection was tested with one PAN per brand, so no range end (JCB 3528 and 3589, Discover 644 to 649, Diners 300 to 305) and no length window (Visa 13 and 19, Amex 15 only, Diners from 14, UnionPay 16 to 19) was checked; `detect_brand_at_the_edges_of_each_range_test` kills those 13 mutants. The survivors, grouped:
-
-- `decimal` (19): digit counting, sign and dot handling in the parser and the comparison of equal-sign values on paths that the tests reach only with values far from the boundary, and the overflow checks that only matter on JavaScript at `Number.MAX_SAFE_INTEGER`.
-- `card` (13): the 12 to 19 digit length check of `validate`, the `mask` clamps, the expiry month and year window, and one Luhn step.
-- `interest` (8) and `amortization` (1): the argument checks at their exact bounds (zero periods, zero digits) and the extra digits used for intermediate rounding.
-- `currency` (1): the remainder distribution of `allocate` when a share is exactly zero.
+- `card` (5): the sign of the Luhn sum, which only matters modulo 10, a doubled digit that is never 9, a prefix that always parses because the length was checked first, and the two clamp bounds of `mask`, which return the same value at the bound.
+- `decimal` (24): the product of two signs, which is the same divided (2); range checks of `divide`, `round` and `checked` that a later check repeats (3); comparisons at zero, where both branches give the same result (6); overflow guards next to 2^53 - 1, where the boundary value cannot occur or another path gives the same result (10); the second-sign flag, which the position check already covers (1); and the zero padding of `compare_by_magnitude`, which is only reached when the leading digits are at the same position and the exponents differ by more than 15, so the digit strings never share a prefix (2).
+- `money` (2): the sign of an amount of 0, and a mutant of `multiply_modulo` that loops forever. A run kills it when the test suite times out, but on a machine where earlyoom stops a runaway BEAM with SIGTERM, the BEAM exits with status 0 and the run reports it as lived, so the baseline lists it as lived. The range check of `checked` is listed as lived for the same reason: one run timed it out and another reported it as lived.
+- `internal/limb` (9), `internal/rounded` (26) and `internal/tvm` (25): the limb arithmetic and the interval bounds behind `interest`. They choose whether a bound is rounded up or down, how many limbs it keeps, or the quotient limb estimate that `correct_down` corrects, and include a branch of `add_scaled` that the multiplication never takes and digit checks that the public functions make first. A looser bound only makes `tvm` retry at a higher precision, and the exact oracle tests get the same results.
 
 Brand detection checks UnionPay (`62`, 16 to 19 digits) before Discover, so Discover's co-branded range 622126 to 622925 is reported as UnionPay. The Discover rule for that range could never match and was removed in 0.12.0.
+
+<!-- mutation:start -->
+| Module | Killed | Lived | Timed out | Score |
+|---|---:|---:|---:|---:|
+| `finanza/card` | 92 | 5 | 0 | 94.8% |
+| `finanza/decimal` | 127 | 24 | 1 | 84.2% |
+| `finanza/interest` | 16 | 0 | 0 | 100.0% |
+| `finanza/internal/limb` | 87 | 9 | 0 | 90.6% |
+| `finanza/internal/rounded` | 57 | 26 | 0 | 68.7% |
+| `finanza/internal/tvm` | 15 | 25 | 0 | 37.5% |
+| `finanza/money` | 43 | 2 | 0 | 95.6% |
+| all | 437 | 91 | 1 | 82.8% |
+<!-- mutation:end -->

@@ -452,3 +452,36 @@ fn list_all(items: List(a), f: fn(a) -> Bool) -> Bool {
       }
   }
 }
+
+// --- Boundaries found by mutation testing ---------------------------------
+
+pub fn validate_accepts_12_and_19_digits_test() -> Nil {
+  // 12 digits pass the length check and fail on the check digit.
+  assert card.validate("400000000006") == Error(card.InvalidLuhn)
+  assert card.validate("4000000000000000006") == Ok(card.Visa)
+}
+
+pub fn mask_clamps_the_kept_digits_to_the_length_test() -> Nil {
+  let options =
+    card.MaskOptions(..card.default_mask, keep_first: 10, keep_last: 10)
+  assert card.mask("4111111111111111", with: options)
+    == Ok("4111 1111 11 1111 11")
+}
+
+pub fn expiry_valid_accepts_january_test() -> Nil {
+  assert card.expiry_valid(
+    card.Expiry(month: 1, year: 2030),
+    today: card.Expiry(month: 1, year: 2026),
+  )
+}
+
+pub fn expiry_valid_rejects_an_invalid_today_month_test() -> Nil {
+  assert !card.expiry_valid(
+    card.Expiry(month: 5, year: 2030),
+    today: card.Expiry(month: 13, year: 2026),
+  )
+}
+
+pub fn parse_expiry_accepts_month_one_test() -> Nil {
+  assert card.parse_expiry("1/30") == Ok(card.Expiry(month: 1, year: 2030))
+}
