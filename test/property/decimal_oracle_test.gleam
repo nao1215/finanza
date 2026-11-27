@@ -12,7 +12,6 @@
 import finanza/decimal
 import metamon
 import metamon/generator.{type Generator}
-import metamon/generator/range
 import support
 
 fn mode_generator() -> Generator(decimal.RoundingMode) {
@@ -31,7 +30,7 @@ fn mode_generator() -> Generator(decimal.RoundingMode) {
 /// mixed in with uniform values so ties are common.
 fn coefficient_generator() -> Generator(Int) {
   generator.one_of([
-    generator.int(range.constant(-10_000, 10_000)),
+    generator.int(generator.range(from: -10_000, to: 10_000)),
     generator.element_of([5, -5, 15, -15, 25, -25, 50, -50, 149, -151, 250]),
   ])
 }
@@ -107,8 +106,8 @@ pub fn round_matches_the_integer_oracle_test() -> Nil {
   metamon.forall(
     generator.tuple4(
       coefficient_generator(),
-      generator.int(range.constant(-5, 2)),
-      generator.int(range.constant(0, 4)),
+      generator.int(generator.range(from: -5, to: 2)),
+      generator.int(generator.range(from: 0, to: 4)),
       mode_generator(),
     ),
     fn(input) {
@@ -128,8 +127,8 @@ pub fn round_matches_the_integer_oracle_test() -> Nil {
             exponent: 0 - digits,
           )
       }
-      decimal.equal(rounded, expected)
-      && decimal.exponent(rounded) == 0 - digits
+      assert decimal.equal(rounded, expected)
+      assert decimal.exponent(rounded) == 0 - digits
     },
   )
 }
@@ -138,10 +137,10 @@ pub fn divide_matches_the_integer_oracle_test() -> Nil {
   metamon.forall(
     generator.tuple6(
       coefficient_generator(),
-      generator.int(range.constant(-3, 1)),
+      generator.int(generator.range(from: -3, to: 1)),
       coefficient_generator(),
-      generator.int(range.constant(-3, 1)),
-      generator.int(range.constant(0, 3)),
+      generator.int(generator.range(from: -3, to: 1)),
+      generator.int(generator.range(from: 0, to: 3)),
       mode_generator(),
     ),
     fn(input) {
@@ -149,9 +148,10 @@ pub fn divide_matches_the_integer_oracle_test() -> Nil {
       let a = support.new(coefficient: ca, exponent: ea)
       let b = support.new(coefficient: cb, exponent: eb)
       case cb == 0 {
-        True ->
-          decimal.divide(a, b, digits: digits, rounding: mode)
-          == Error(decimal.DivisionByZero)
+        True -> {
+          assert decimal.divide(a, b, digits: digits, rounding: mode)
+            == Error(decimal.DivisionByZero)
+        }
         False -> {
           // a / b * 10^digits = ca * 10^(ea - eb + digits) / cb
           let shift = ea - eb + digits
@@ -168,10 +168,9 @@ pub fn divide_matches_the_integer_oracle_test() -> Nil {
               coefficient: round_div(numerator, denominator, mode),
               exponent: 0 - digits,
             )
-          case decimal.divide(a, b, digits: digits, rounding: mode) {
-            Ok(quotient) -> decimal.equal(quotient, expected)
-            Error(_) -> False
-          }
+          let assert Ok(quotient) =
+            decimal.divide(a, b, digits: digits, rounding: mode)
+          assert decimal.equal(quotient, expected)
         }
       }
     },

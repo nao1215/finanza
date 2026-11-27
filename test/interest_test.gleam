@@ -492,3 +492,25 @@ pub fn schedule_checks_inputs_for_zero_periods_test() -> Nil {
     )
     == Error(interest.NegativePrincipal)
 }
+
+// --- Boundaries found by mutation testing ---------------------------------
+
+pub fn present_value_at_rate_minus_one_over_zero_periods_test() -> Nil {
+  let assert Ok(value) =
+    interest.present_value(
+      future: support.parse("100"),
+      rate_per_period: decimal.negate(decimal.one()),
+      periods: 0,
+      digits: 2,
+    )
+  assert decimal.equal(value, support.parse("100"))
+}
+
+pub fn effective_annual_rate_rejects_zero_compounds_test() -> Nil {
+  assert interest.effective_annual_rate(
+      nominal_rate: support.parse("0.05"),
+      compounds_per_year: 0,
+      digits: 2,
+    )
+    == Error(interest.CompoundsOutOfRange)
+}

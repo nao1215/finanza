@@ -523,3 +523,24 @@ fn list_fold(items: List(a), acc: b, f: fn(b, a) -> b) -> b {
     [head, ..rest] -> list_fold(rest, f(acc, head), f)
   }
 }
+
+// --- Boundaries found by mutation testing ---------------------------------
+
+pub fn allocate_carries_a_share_that_wraps_the_ratio_total_test() -> Nil {
+  // 6 × 2 / 4 = 3 exactly: the share of the last ratio wraps the total
+  // of the ratios once.
+  let assert Ok(parts) =
+    money.allocate(support.from_minor(6, money.usd), [1, 1, 2])
+  assert list.map(parts, fn(part) { money.to_minor(part, decimal.HalfEven) })
+    == [Ok(2), Ok(1), Ok(3)]
+}
+
+pub fn add_keeps_the_places_when_the_second_operand_is_zero_test() -> Nil {
+  let big = support.from_minor(9_007_199_254_740_991, money.usd)
+  let zero =
+    money.Money(
+      amount: support.new(coefficient: 0, exponent: -3),
+      currency: money.usd,
+    )
+  assert money.add(big, zero) == Ok(big)
+}

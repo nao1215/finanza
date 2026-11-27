@@ -7,7 +7,6 @@ import gleam/int
 import gleam/string
 import metamon
 import metamon/generator
-import metamon/generator/range
 
 import finanza/card
 
@@ -15,8 +14,9 @@ import finanza/card
 
 fn digit_string_gen(min_len: Int, max_len: Int) -> generator.Generator(String) {
   generator.list_of(
-    generator.int(range.constant(0, 9)) |> generator.map(int.to_string),
-    range.constant(min_len, max_len),
+    generator.int(generator.range(from: 0, to: 9))
+      |> generator.map(int.to_string),
+    length: generator.range(from: min_len, to: max_len),
   )
   |> generator.map(string.concat)
 }
@@ -24,11 +24,15 @@ fn digit_string_gen(min_len: Int, max_len: Int) -> generator.Generator(String) {
 fn pan_with_separators_gen() -> generator.Generator(String) {
   let token =
     generator.frequency([
-      #(8, generator.int(range.constant(0, 9)) |> generator.map(int.to_string)),
+      #(
+        8,
+        generator.int(generator.range(from: 0, to: 9))
+          |> generator.map(int.to_string),
+      ),
       #(1, generator.return(" ")),
       #(1, generator.return("-")),
     ])
-  generator.list_of(token, range.constant(0, 20))
+  generator.list_of(token, length: generator.range(from: 0, to: 20))
   |> generator.map(string.concat)
 }
 
@@ -40,7 +44,7 @@ pub fn luhn_check_digit_makes_valid_test() {
   // True. We compute C by brute force (0..9) and assert validity.
   metamon.forall(digit_string_gen(1, 18), fn(prefix) {
     let with_check = append_luhn_check_digit(prefix)
-    card.luhn_valid(with_check)
+    assert card.luhn_valid(with_check)
   })
 }
 
@@ -65,7 +69,7 @@ pub fn luhn_prepend_zero_preserves_validity_test() {
   // class. This is an algebraic property of the Luhn weighting scheme.
   metamon.forall(digit_string_gen(1, 18), fn(prefix) {
     let with_check = append_luhn_check_digit(prefix)
-    card.luhn_valid("0" <> with_check)
+    assert card.luhn_valid("0" <> with_check)
   })
 }
 
@@ -77,14 +81,15 @@ pub fn normalize_idempotent_test() {
       name: "card_normalize_idempotent",
       of: card.normalize,
     )
-  metamon.forall_morph(pan_with_separators_gen(), mr, card.normalize)
+  metamon.forall_morph(pan_with_separators_gen(), [mr], card.normalize)
 }
 
 pub fn normalize_strips_separators_test() {
   // After normalisation, no space or hyphen should remain.
   metamon.forall(pan_with_separators_gen(), fn(input) {
     let n = card.normalize(input)
-    !string.contains(n, " ") && !string.contains(n, "-")
+    assert !string.contains(n, " ")
+    assert !string.contains(n, "-")
   })
 }
 
@@ -92,7 +97,7 @@ pub fn validate_invariant_under_normalisation_test() {
   // Validating a PAN with separators must yield the same result as
   // validating the already-normalised form.
   metamon.forall(pan_with_separators_gen(), fn(input) {
-    card.validate(input) == card.validate(card.normalize(input))
+    assert card.validate(input) == card.validate(card.normalize(input))
   })
 }
 
@@ -108,7 +113,7 @@ pub fn detect_brand_invariant_under_separators_test() {
       string.length(n) >= 12 && string.length(n) <= 19
     })
   metamon.forall(brands_with_separators, fn(input) {
-    card.detect_brand(input) == card.detect_brand(card.normalize(input))
+    assert card.detect_brand(input) == card.detect_brand(card.normalize(input))
   })
 }
 
@@ -118,13 +123,8 @@ pub fn last_four_is_suffix_test() {
   // `last_four(pan)` always equals the last 4 digits of `normalize(pan)`
   // when the input has at least 4 digits.
   metamon.forall(digit_string_gen(4, 19), fn(pan) {
-    case card.last_four(pan) {
-      Ok(suffix) -> {
-        let length = string.length(pan)
-        suffix == string.slice(pan, length - 4, 4)
-      }
-      Error(_) -> False
-    }
+    let length = string.length(pan)
+    assert card.last_four(pan) == Ok(string.slice(pan, length - 4, 4))
   })
 }
 
@@ -132,10 +132,7 @@ pub fn bin_is_prefix_test() {
   // `bin(pan)` always equals the first 6 digits of `normalize(pan)`
   // when the input has at least 6 digits.
   metamon.forall(digit_string_gen(6, 19), fn(pan) {
-    case card.bin(pan) {
-      Ok(prefix) -> prefix == string.slice(pan, 0, 6)
-      Error(_) -> False
-    }
+    assert card.bin(pan) == Ok(string.slice(pan, 0, 6))
   })
 }
 
@@ -149,6 +146,6 @@ pub fn brand_to_string_deterministic_test() {
     card.DinersClub, card.UnionPay, card.Unknown,
   ]
   metamon.forall(generator.element_of(brands), fn(b) {
-    card.brand_to_string(b) == card.brand_to_string(b)
+    assert card.brand_to_string(b) == card.brand_to_string(b)
   })
 }

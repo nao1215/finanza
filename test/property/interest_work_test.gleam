@@ -13,7 +13,6 @@ import gleam/list
 import gleam/order
 import metamon
 import metamon/generator.{type Generator}
-import metamon/generator/range
 
 import finanza/decimal.{type Decimal}
 import finanza/internal/rounded.{type Number}
@@ -30,28 +29,37 @@ fn make(coefficient: Int, exponent: Int) -> Decimal {
 
 fn amount() -> Generator(Decimal) {
   generator.one_of([
-    generator.map(generator.int(range.constant(0, max)), make(_, 0)),
-    generator.map(generator.int(range.constant(1, max)), make(_, -28)),
-    generator.map(generator.int(range.constant(1, 1_000_000)), make(_, -2)),
+    generator.map(generator.int(generator.range(from: 0, to: max)), make(_, 0)),
+    generator.map(generator.int(generator.range(from: 1, to: max)), make(_, -28)),
+    generator.map(generator.int(generator.range(from: 1, to: 1_000_000)), make(
+      _,
+      -2,
+    )),
   ])
 }
 
 fn rate() -> Generator(Decimal) {
   generator.one_of([
     // Up to 2^53.
-    generator.map(generator.int(range.constant(1, max)), make(_, 0)),
+    generator.map(generator.int(generator.range(from: 1, to: max)), make(_, 0)),
     // Just above -1.
-    generator.map(generator.int(range.constant(1, 1000)), fn(c) {
+    generator.map(generator.int(generator.range(from: 1, to: 1000)), fn(c) {
       make(c - 1_000_000_000_000_000, -15)
     }),
     // 16 and 28 places.
-    generator.map(generator.int(range.constant(-max, max)), make(_, -16)),
-    generator.map(generator.int(range.constant(1, max)), make(_, -28)),
-    generator.map(generator.int(range.constant(-max, max)), make(_, -28)),
+    generator.map(generator.int(generator.range(from: -max, to: max)), make(
+      _,
+      -16,
+    )),
+    generator.map(generator.int(generator.range(from: 1, to: max)), make(_, -28)),
+    generator.map(generator.int(generator.range(from: -max, to: max)), make(
+      _,
+      -28,
+    )),
     // A few digits, -1 or more.
     generator.map2(
-      generator.int(range.constant(-99, 9999)),
-      generator.int(range.constant(2, 4)),
+      generator.int(generator.range(from: -99, to: 9999)),
+      generator.int(generator.range(from: 2, to: 4)),
       fn(c, places) { make(c, 0 - places) },
     ),
   ])
@@ -62,9 +70,9 @@ fn rate() -> Generator(Decimal) {
 
 fn periods() -> Generator(Int) {
   generator.one_of([
-    generator.int(range.constant(1, 1200)),
-    generator.int(range.constant(1100, 1200)),
-    generator.int(range.constant(1, 30)),
+    generator.int(generator.range(from: 1, to: 1200)),
+    generator.int(generator.range(from: 1100, to: 1200)),
+    generator.int(generator.range(from: 1, to: 30)),
   ])
 }
 
@@ -112,7 +120,7 @@ fn inputs() {
 /// of `(1 + rate)^periods - 1` that `payment` divides by.
 pub fn bounds_keep_their_precision_test() {
   metamon.forall_with(
-    metamon.with_runs_or_panic(metamon.default_config(), 200),
+    metamon.Config(..metamon.default_config(), runs: 200),
     inputs(),
     fn(input) {
       let #(_, rate, periods) = input
@@ -120,10 +128,10 @@ pub fn bounds_keep_their_precision_test() {
         True -> fn(_) { Error(Nil) }
         False -> tvm.growth(rate, periods, _)
       }
-      list.all(tvm.precisions, fn(precision) {
-        width(growth(precision)) <= precision + 2
-        && list.all(values(input), fn(value) {
-          width(value.bounds(precision)) <= limit(precision)
+      list.each(tvm.precisions, fn(precision) {
+        assert width(growth(precision)) <= precision + 2
+        list.each(values(input), fn(value) {
+          assert width(value.bounds(precision)) <= limit(precision)
         })
       })
     },
@@ -134,14 +142,18 @@ pub fn bounds_keep_their_precision_test() {
 /// bounds give, and otherwise it is `PrecisionExceeded`.
 pub fn the_exact_value_agrees_or_is_capped_test() {
   metamon.forall_with(
-    metamon.with_runs_or_panic(metamon.default_config(), 100),
-    generator.tuple2(inputs(), generator.int(range.constant(0, 28))),
+    metamon.Config(..metamon.default_config(), runs: 100),
+    generator.tuple2(inputs(), generator.int(generator.range(from: 0, to: 28))),
     fn(input) {
       let #(input, digits) = input
-      list.all(values(input), fn(value) {
+      list.each(values(input), fn(value) {
         let exact = value.exact(digits)
-        exact == Error(decimal.PrecisionExceeded)
-        || exact == tvm.round(value, digits:)
+        case exact {
+          Error(decimal.PrecisionExceeded) -> Nil
+          _ -> {
+            assert exact == tvm.round(value, digits:)
+          }
+        }
       })
     },
   )

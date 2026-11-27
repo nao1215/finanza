@@ -26,12 +26,12 @@ fn pairs() {
 /// `a + b` and `b + a` are the same, and `a - b` is `a + (-b)`.
 pub fn sum_is_symmetric_test() {
   metamon.forall_with(
-    metamon.with_runs_or_panic(metamon.default_config(), 2000),
+    metamon.Config(..metamon.default_config(), runs: 2000),
     pairs(),
     fn(input) {
       let #(a, b) = input
-      decimal.add(a, b) == decimal.add(b, a)
-      && decimal.subtract(a, b) == decimal.add(a, decimal.negate(b))
+      assert decimal.add(a, b) == decimal.add(b, a)
+      assert decimal.subtract(a, b) == decimal.add(a, decimal.negate(b))
     },
   )
 }
@@ -39,17 +39,16 @@ pub fn sum_is_symmetric_test() {
 /// Whenever `a + b` succeeds, `(a + b) - b` succeeds too and equals `a`.
 pub fn sum_subtracts_back_to_the_operand_test() {
   metamon.forall_with(
-    metamon.with_runs_or_panic(metamon.default_config(), 2000),
+    metamon.Config(..metamon.default_config(), runs: 2000),
     pairs(),
     fn(input) {
       let #(a, b) = input
       case decimal.add(a, b) {
-        Ok(total) ->
-          case decimal.subtract(total, b) {
-            Ok(back) -> decimal.equal(back, a)
-            Error(_) -> False
-          }
-        Error(_) -> True
+        Ok(total) -> {
+          let assert Ok(back) = decimal.subtract(total, b)
+          assert decimal.equal(back, a)
+        }
+        Error(_) -> Nil
       }
     },
   )
@@ -117,12 +116,12 @@ fn parts(
 @target(erlang)
 pub fn sum_matches_the_bignum_oracle_test() {
   metamon.forall_with(
-    metamon.with_runs_or_panic(metamon.default_config(), 2000),
+    metamon.Config(..metamon.default_config(), runs: 2000),
     pairs(),
     fn(input) {
       let #(a, b) = input
-      parts(decimal.add(a, b)) == oracle(a, b)
-      && parts(decimal.subtract(a, b)) == oracle(a, decimal.negate(b))
+      assert parts(decimal.add(a, b)) == oracle(a, b)
+      assert parts(decimal.subtract(a, b)) == oracle(a, decimal.negate(b))
     },
   )
 }

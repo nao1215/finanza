@@ -9,7 +9,6 @@
 import gleam/int
 import metamon
 import metamon/generator.{type Generator}
-import metamon/generator/range
 
 import finanza/decimal
 import support
@@ -49,10 +48,10 @@ fn pow10(n: Int) -> Int {
 /// products often pass 2^53 and still fit once their zeros go.
 fn coefficient_generator() -> Generator(Int) {
   generator.one_of([
-    generator.int(range.constant(0 - max, max)),
+    generator.int(generator.range(from: 0 - max, to: max)),
     generator.map2(
-      generator.int(range.constant(-999_999, 999_999)),
-      generator.int(range.constant(0, 9)),
+      generator.int(generator.range(from: -999_999, to: 999_999)),
+      generator.int(generator.range(from: 0, to: 9)),
       fn(digits, zeros) { digits * pow10(zeros) },
     ),
     generator.element_of([
@@ -77,7 +76,7 @@ fn coefficient_generator() -> Generator(Int) {
 pub fn decimal_generator() -> Generator(decimal.Decimal) {
   generator.map2(
     coefficient_generator(),
-    generator.int(range.constant(-28, 15)),
+    generator.int(generator.range(from: -28, to: 15)),
     fn(coefficient, exponent) {
       case decimal.new(coefficient:, exponent:) {
         Ok(value) -> value
@@ -92,29 +91,27 @@ pub fn decimal_generator() -> Generator(decimal.Decimal) {
 /// gives the other back exactly. Runs on both targets.
 pub fn product_divides_back_to_the_factor_test() {
   metamon.forall_with(
-    metamon.with_runs_or_panic(metamon.default_config(), 1000),
+    metamon.Config(..metamon.default_config(), runs: 1000),
     generator.tuple2(decimal_generator(), decimal_generator()),
     fn(input) {
       let #(a, b) = input
       let product = decimal.multiply(a, b)
       let swapped = decimal.multiply(b, a)
-      let back = case product, decimal.is_zero(b) {
-        Ok(_), True -> True
-        Ok(p), False ->
-          case
+      assert product == swapped
+      case product, decimal.is_zero(b) {
+        Ok(_), True -> Nil
+        Ok(p), False -> {
+          let assert Ok(quotient) =
             decimal.divide(
               p,
               b,
               digits: 0 - decimal.exponent(a),
               rounding: decimal.Down,
             )
-          {
-            Ok(quotient) -> decimal.equal(quotient, a)
-            Error(_) -> False
-          }
-        Error(_), _ -> True
+          assert decimal.equal(quotient, a)
+        }
+        Error(_), _ -> Nil
       }
-      product == swapped && back
     },
   )
 }
@@ -160,11 +157,11 @@ fn oracle_drop(
 @target(erlang)
 pub fn product_matches_the_bignum_oracle_test() {
   metamon.forall_with(
-    metamon.with_runs_or_panic(metamon.default_config(), 1000),
+    metamon.Config(..metamon.default_config(), runs: 1000),
     generator.tuple2(decimal_generator(), decimal_generator()),
     fn(input) {
       let #(a, b) = input
-      decimal.multiply(a, b) |> parts == oracle(a, b)
+      assert decimal.multiply(a, b) |> parts == oracle(a, b)
     },
   )
 }
