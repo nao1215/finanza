@@ -30,7 +30,7 @@ There is no coverage-guided fuzzer for Gleam. `test/dig_round4_fuzzing_test.glea
 
 `gleam run -m metamon/mutation` changes one operator, `!` or boolean literal in a module under `src/` at a time and runs `gleam test --target erlang` on each change. `.github/workflows/mutation.yml` mutates the modules a pull request changes and fails on a survivor that `doc/mutation/baseline.json` does not list; the weekly run mutates every module. `just mutation` runs everything and `just mutation-record` writes the baseline.
 
-The first run (2026-11-27) scored 79.6%. Tests were then added for `validate` at 12 and 19 digits, `mask` when the kept digits cover the whole number, January and an invalid current month in `expiry_valid` and `parse_expiry`, a sign after a digit, a trailing zero just below 2^53, `to_int` with a positive exponent and with 15 places, a product that drops 15 trailing zeros, a sum scaled by 15 places, an `allocate` share that wraps the ratio total, adding a zero with more places, `present_value` at a rate of -1 over zero periods and `effective_annual_rate` with zero compounds, and the score rose to 82.8%. The 91 survivors left change nothing that a caller can see:
+The first run (2026-11-27) scored 79.6%. Tests were then added for `validate` at 12 and 19 digits, `mask` when the kept digits cover the whole number, January and an invalid current month in `expiry_valid` and `parse_expiry`, a sign after a digit, a trailing zero just below 2^53, `to_int` with a positive exponent and with 15 places, a product that drops 15 trailing zeros, a sum scaled by 15 places, an `allocate` share that wraps the ratio total, adding a zero with more places, `present_value` at a rate of -1 over zero periods and `effective_annual_rate` with zero compounds, and the score rose to 82.8%. The baseline is the union of the survivors of two full runs after the new tests; a mutant that one run reported as lived only because it looped until earlyoom stopped the test process was rerun by hand and left out. The 91 survivors left change nothing that a caller can see:
 
 - `card` (5): the sign of the Luhn sum, which only matters modulo 10, a doubled digit that is never 9, a prefix that always parses because the length was checked first, and the two clamp bounds of `mask`, which return the same value at the bound.
 - `decimal` (24): the product of two signs, which is the same divided (2); range checks of `divide`, `round` and `checked` that a later check repeats (3); comparisons at zero, where both branches give the same result (6); overflow guards next to 2^53 - 1, where the boundary value cannot occur or another path gives the same result (10); the second-sign flag, which the position check already covers (1); and the zero padding of `compare_by_magnitude`, which is only reached when the leading digits are at the same position and the exponents differ by more than 15, so the digit strings never share a prefix (2).
@@ -45,9 +45,9 @@ Brand detection checks UnionPay (`62`, 16 to 19 digits) before Discover, so Disc
 | `finanza/card` | 92 | 5 | 0 | 94.8% |
 | `finanza/decimal` | 127 | 24 | 1 | 84.2% |
 | `finanza/interest` | 16 | 0 | 0 | 100.0% |
-| `finanza/internal/limb` | 87 | 9 | 0 | 90.6% |
+| `finanza/internal/limb` | 85 | 9 | 2 | 90.6% |
 | `finanza/internal/rounded` | 57 | 26 | 0 | 68.7% |
 | `finanza/internal/tvm` | 15 | 25 | 0 | 37.5% |
 | `finanza/money` | 43 | 2 | 0 | 95.6% |
-| all | 437 | 91 | 1 | 82.8% |
+| all | 435 | 91 | 3 | 82.8% |
 <!-- mutation:end -->
