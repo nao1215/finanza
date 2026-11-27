@@ -55,15 +55,16 @@ pub fn rounded_product_matches_round_of_the_exact_product_test() {
           assert actual == expected
           case digits >= 0 {
             True -> {
+              let expected_money = case expected {
+                Ok(amount) -> Ok(money.Money(amount:, currency:))
+                Error(error) -> Error(money.ArithmeticFailed(error))
+              }
               assert money.multiply(
                   money.Money(amount: a, currency:),
                   by: b,
                   rounding: mode,
                 )
-                == case expected {
-                  Ok(amount) -> Ok(money.Money(amount:, currency:))
-                  Error(error) -> Error(money.ArithmeticFailed(error))
-                }
+                == expected_money
             }
             False -> Nil
           }

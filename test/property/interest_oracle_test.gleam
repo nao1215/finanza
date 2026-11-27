@@ -25,7 +25,6 @@ import metamon
 @target(erlang)
 import metamon/generator.{type Generator}
 
-@target(erlang)
 /// The first case the oracle found against 0.13.4, on both targets: the
 /// exact payment is 43787710.37029200000…00019 (140 zeros), and 0.13.4,
 /// which kept about 16 significant digits, rounded it otherwise.
