@@ -47,7 +47,7 @@ Brand detection checks UnionPay (`62`, 16 to 19 digits) before Discover, so Disc
 | `finanza/interest` | 16 | 0 | 0 | 100.0% |
 | `finanza/internal/limb` | 85 | 9 | 2 | 90.6% |
 | `finanza/internal/rounded` | 57 | 26 | 0 | 68.7% |
-| `finanza/internal/tvm` | 15 | 25 | 0 | 37.5% |
+| `finanza/internal/tvm` | 14 | 26 | 0 | 35.0% |
 | `finanza/money` | 43 | 2 | 0 | 95.6% |
-| all | 435 | 91 | 3 | 82.8% |
+| all | 434 | 92 | 3 | 82.6% |
 <!-- mutation:end -->
