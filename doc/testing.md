@@ -26,6 +26,10 @@ There is no coverage-guided fuzzer for Gleam. `test/dig_round4_fuzzing_test.glea
 
 `.github/workflows/nightly-property.yml` runs the whole suite ten times with `METAMON_RUNS_MULTIPLIER=10`, each pass with a new seed. A failure report prints its seed, so the case can be replayed with `Config(..default_config(), seed: Some(seed))` and kept as a regression test.
 
+## Coverage
+
+`gleam run -m metamon/mutation -- coverage` (`just coverage`) runs the tests on the Erlang target with every module under `src/` measured and writes `build/coverage/lcov.info`. It needs Gleam 1.19 or later, newer than the floor the package supports, because older compilers do not keep the Gleam line numbers that `cover` reports. Run `gleam build --target erlang` first (`just coverage` does), since `gleam run -m` of a dependency module does not compile the package. `.github/workflows/coverage.yml` reports it with octocov on pull requests and main. The first run (2026-11-28) reached 96.6% of the lines (990 of 1025).
+
 ## Mutation testing
 
 `gleam run -m metamon/mutation` changes one operator, `!` or boolean literal in a module under `src/` at a time and runs `gleam test --target erlang` on each change. `.github/workflows/mutation.yml` mutates the modules a pull request changes and fails on a survivor that `doc/mutation/baseline.json` does not list; the weekly run mutates every module. `just mutation` runs everything and `just mutation-record` writes the baseline.
